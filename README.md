@@ -4,7 +4,7 @@ A high-performance, real-time network traffic analyzer built with **Modern C++20
 
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg) ![Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-## 🚀 Key Features
+## Key Features
 
 - **Real-Time Packet Capture**: Captures live traffic using the Npcap driver.
 - **Protocol Parsing**: Deep inspection of Ethernet, IPv4, TCP (including TLS SNI extraction), and UDP headers.
@@ -13,7 +13,7 @@ A high-performance, real-time network traffic analyzer built with **Modern C++20
   - **Zero-Copy** header inspection where possible.
   - **Multi-threaded Architecture**: Decoupled Capture (Producer) and Rendering (Consumer) threads using a thread-safe packet queue.
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Language**: C++20
 - **Packet Capture**: [Npcap SDK](https://npcap.com/)
@@ -21,7 +21,7 @@ A high-performance, real-time network traffic analyzer built with **Modern C++20
 - **Plotting**: [ImPlot](https://github.com/epezent/implot)
 - **Build System**: CMake
 
-## 📦 Prerequisites
+## Prerequisites
 
 1. **Windows 10/11**
 2. **Visual Studio 2022** (with C++ Desktop Development workload)
@@ -30,7 +30,7 @@ A high-performance, real-time network traffic analyzer built with **Modern C++20
     - Download the SDK ZIP.
     - Extract it to `C:\Npcap-SDK` (or update the path in `CMakeLists.txt`).
 
-## 🔨 Build Instructions
+## Build Instructions
 
 ```powershell
 # 1. Clone the repository
@@ -45,7 +45,7 @@ cmake -B build -S .
 cmake --build build --config Release
 ```
 
-## 🖥️ Usage
+## Usage
 
 1. Navigate to the build output directory (e.g., `build/Release`).
 2. **Important**: Run the executable as **Administrator**. Raw packet capture typically requires elevated privileges.
@@ -56,7 +56,7 @@ cmake --build build --config Release
 
 3. The dashboard will launch and automatically start capturing on the first available active network adapter.
 
-## 🧩 Architecture
+## Architecture
 
 NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive while handling high-throughput traffic.
 
@@ -74,10 +74,10 @@ NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive 
   - A thread-safe wrapper around `std::queue`.
   - Uses `std::mutex` and `std::condition_variable` to prevent race conditions and ensure data integrity.
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
