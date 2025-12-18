@@ -31,6 +31,14 @@ exit /b 1
 
 :Build
 echo.
+echo [0/2] Cleaning previous build artifacts...
+if exist build rmdir /s /q build
+if exist build (
+    echo Error: Could not delete 'build' directory.
+    echo Please CLOSE any open files in 'build\' - e.g. CMakeCache.txt - and try again.
+    exit /b 1
+)
+
 echo Environment initialized. Building NetProbe...
 echo.
 

@@ -1,7 +1,7 @@
-prefix=C:/Program Files (x86)/NetProbe
+prefix=C:/Program Files/NetProbe
 exec_prefix=${prefix}
-includedir=C:/Program Files (x86)/NetProbe/include
-libdir=C:/Program Files (x86)/NetProbe/lib
+includedir=C:/Program Files/NetProbe/include
+libdir=C:/Program Files/NetProbe/lib
 
 Name: GLFW
 Description: A multi-platform library for OpenGL, window and input

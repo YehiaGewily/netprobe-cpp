@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="E:\side projects\netprobe-cpp\build\_deps\implot-subbuild\CMakeFiles\80c3c9b4ca294574bf0376750e41efa1\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{CE6FDD56-0E79-3B92-8A3E-366B8FBF3748}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

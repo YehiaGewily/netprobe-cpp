@@ -47,6 +47,11 @@ namespace ui {
 
     class GuiLayer {
     public:
+        struct DeviceInfo {
+            std::string name;
+            std::string description;
+        };
+
         GuiLayer(core::PacketQueue& queue);
         ~GuiLayer();
 
@@ -55,10 +60,20 @@ namespace ui {
 
         // Main Application Loop
         void run();
+        
+        // Populate device list for UI selection
+        void setDevices(const std::vector<DeviceInfo>& devices);
+        
+        // Callback to start capture on new device
+        std::function<void(std::string)> onDeviceSelected;
 
     private:
         core::PacketQueue& m_queue;
         GLFWwindow* m_window = nullptr;
+        
+        // Device Management
+        std::vector<DeviceInfo> m_devices;
+        int m_selectedDeviceIndex = 0;
 
         // UI State
         std::deque<core::ParsedPacket> m_packetHistory;

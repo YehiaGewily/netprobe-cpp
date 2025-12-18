@@ -9,6 +9,13 @@ set(NPCAP_SDK_PATH "C:/Npcap-SDK")
 
 if(NOT EXISTS "${NPCAP_SDK_PATH}")
     message(WARNING "Npcap SDK not found at ${NPCAP_SDK_PATH}. Please ensure it is installed.")
+else()
+    message(STATUS "Found Npcap SDK path: ${NPCAP_SDK_PATH}")
+    if(EXISTS "${NPCAP_SDK_PATH}/Include/pcap.h")
+        message(STATUS "Found pcap.h in ${NPCAP_SDK_PATH}/Include")
+    else()
+        message(WARNING "Could NOT find pcap.h in ${NPCAP_SDK_PATH}/Include. Check directory structure.")
+    endif()
 endif()
 
 # Define Npcap Libraries manually
@@ -60,10 +67,28 @@ set(IMGUI_BACKEND_SOURCES
     "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp"
 )
 
+# ImGui Core Sources (Required for linking)
+set(IMGUI_CORE_SOURCES
+    "${imgui_SOURCE_DIR}/imgui.cpp"
+    "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+    "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+    "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+    "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+)
+
+# ImPlot Core Sources
+set(IMPLOT_SOURCES
+    "${implot_SOURCE_DIR}/implot.cpp"
+    "${implot_SOURCE_DIR}/implot_items.cpp"
+    "${implot_SOURCE_DIR}/implot_demo.cpp"
+)
+
 # --- 4. Executable Target ---
 add_executable(NetProbe 
     ${APP_SOURCES}
     ${IMGUI_BACKEND_SOURCES}
+    ${IMGUI_CORE_SOURCES}
+    ${IMPLOT_SOURCES}
 )
 
 # --- 5. Include Directories ---
@@ -82,6 +107,7 @@ target_link_libraries(NetProbe PRIVATE
     ${NPCAP_LIBS}
     ws2_32  # Windows Sockets
     dwmapi  # Usually needed for modern Windows UI/ImGui
+    opengl32
 )
 
 # Define generic Macros if needed

@@ -1,1 +1,0 @@
- "_deps/glfw-build/src/libglfw3.a" "C:/Npcap-SDK/Lib/x64/wpcap.lib" "C:/Npcap-SDK/Lib/x64/Packet.lib" -lws2_32 -ldwmapi -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 

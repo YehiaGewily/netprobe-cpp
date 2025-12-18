@@ -111,11 +111,15 @@ namespace ui {
 
     void GuiLayer::renderUI() {
         // Create a DockSpace
-        ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
         renderMenuBar();
         renderPacketTable();
         renderCharts();
+    }
+
+    void GuiLayer::setDevices(const std::vector<DeviceInfo>& devices) {
+        m_devices = devices;
     }
 
     void GuiLayer::renderMenuBar() {
@@ -124,6 +128,27 @@ namespace ui {
                 if (ImGui::MenuItem("Exit")) glfwSetWindowShouldClose(m_window, true);
                 ImGui::EndMenu();
             }
+            
+            // Device Selector
+            if (!m_devices.empty()) {
+                ImGui::Separator();
+                ImGui::Text("Adapter: ");
+                ImGui::SetNextItemWidth(400);
+                if (ImGui::BeginCombo("##deviceCombo", m_devices[m_selectedDeviceIndex].description.c_str())) {
+                    for (int n = 0; n < m_devices.size(); n++) {
+                        const bool is_selected = (m_selectedDeviceIndex == n);
+                        if (ImGui::Selectable(m_devices[n].description.c_str(), is_selected)) {
+                            m_selectedDeviceIndex = n;
+                            if (onDeviceSelected) {
+                                onDeviceSelected(m_devices[n].name); // Pass the system name (UUID)
+                            }
+                        }
+                        if (is_selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
             ImGui::EndMainMenuBar();
         }
     }

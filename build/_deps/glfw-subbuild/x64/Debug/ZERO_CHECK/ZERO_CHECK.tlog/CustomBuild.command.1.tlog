@@ -1,0 +1,10 @@
+^E:\SIDE PROJECTS\NETPROBE-CPP\BUILD\_DEPS\GLFW-SUBBUILD\CMAKEFILES\012EF140AB523D8EA85173D5461227C8\GENERATE.STAMP.RULE
+setlocal
+C:\ProgramData\Intel\cmake-4.2.1-windows-x86_64\bin\cmake.exe "-SE:/side projects/netprobe-cpp/build/_deps/glfw-subbuild" "-BE:/side projects/netprobe-cpp/build/_deps/glfw-subbuild" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "E:/side projects/netprobe-cpp/build/_deps/glfw-subbuild/glfw-populate.sln"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

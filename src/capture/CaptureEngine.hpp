@@ -9,6 +9,7 @@
 // Forward declaration for pcap types to avoid including pcap.h in header
 struct pcap;
 typedef struct pcap pcap_t;
+struct pcap_pkthdr;
 
 namespace core {
     class PacketQueue;
@@ -45,7 +46,7 @@ namespace capture {
         // Internal capture loop
         void captureLoop(std::stop_token stoken);
         
-        static void packetHandler(u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet);
+        static void packetHandler(unsigned char* user, const struct pcap_pkthdr* pkthdr, const unsigned char* packet);
     };
 
 } // namespace capture

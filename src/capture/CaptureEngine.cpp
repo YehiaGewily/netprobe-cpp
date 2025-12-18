@@ -86,10 +86,10 @@ namespace capture {
 
         // Start the capture loop
         // 0 = infinite loop until error or breakloop
-        pcap_loop(m_handle, 0, CaptureEngine::packetHandler, reinterpret_cast<u_char*>(this));
+        pcap_loop(m_handle, 0, CaptureEngine::packetHandler, reinterpret_cast<unsigned char*>(this));
     }
 
-    void CaptureEngine::packetHandler(u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
+    void CaptureEngine::packetHandler(unsigned char* user, const struct pcap_pkthdr* pkthdr, const unsigned char* packet) {
         auto* engine = reinterpret_cast<CaptureEngine*>(user);
         
         // Convert timestamp struct timeval (sec, usec) to microseconds

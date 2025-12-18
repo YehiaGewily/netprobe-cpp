@@ -24,17 +24,30 @@ int main() {
         return 1;
     }
 
-    // Auto-select the first device for now
-    // In a real app, we'd pass this list to the UI for selection
-    std::string selectedDevice = devices[0].name;
-    std::cout << "Selected device: " << devices[0].description << std::endl;
+    // Convert capture::DeviceInfo to ui::GuiLayer::DeviceInfo
+    std::vector<ui::GuiLayer::DeviceInfo> uiDevices;
+    for (const auto& d : devices) {
+        uiDevices.push_back({d.name, d.description});
+    }
 
-    // 3. Start Capture
-    engine.startCapture(selectedDevice);
-
-    // 4. Initialize and Run UI
+    // 3. Initialize and Run UI
     ui::GuiLayer gui(queue);
     
+    // Pass devices to UI
+    gui.setDevices(uiDevices);
+
+    // Handle Device Selection
+    gui.onDeviceSelected = [&](std::string deviceName) {
+        std::cout << "Switching to device: " << deviceName << std::endl;
+        engine.startCapture(deviceName);
+    };
+
+    // Auto-start on the first device
+    if (!devices.empty()) {
+        std::cout << "Auto-selecting device: " << devices[0].description << std::endl;
+        engine.startCapture(devices[0].name);
+    }
+
     if (!gui.init()) {
         std::cerr << "Failed to initialize GUI." << std::endl;
         return 1;
