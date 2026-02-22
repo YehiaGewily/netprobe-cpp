@@ -7,7 +7,7 @@ A high-performance, real-time network traffic analyzer built with **Modern C++20
 ## Key Features
 
 - **Real-Time Packet Capture**: Captures live traffic using the Npcap driver.
-- **Dynamic Device Selection**: Select any active network adapter from the UI at runtime.
+- **Dynamic Device Selection**: Select any active network adapter from the UI at runtime.  
 - **Protocol Parsing**: Deep inspection of Ethernet, IPv4, TCP (including TLS SNI extraction), and UDP headers.
 
 ## Tech Stack
@@ -79,4 +79,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License.
+
 
