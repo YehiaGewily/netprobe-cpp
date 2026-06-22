@@ -31,7 +31,7 @@ exit /b 1
 
 :Build
 echo.
-echo [0/2] Cleaning previous build artifacts...
+echo [0/3] Cleaning previous build artifacts...
 if exist build rmdir /s /q build
 if exist build (
     echo Error: Could not delete 'build' directory.
@@ -43,7 +43,7 @@ echo Environment initialized. Building NetProbe...
 echo.
 
 :: Configure
-echo [1/2] Configuring CMake...
+echo [1/3] Configuring CMake...
 cmake -B build -S . -G "Visual Studio 17 2022" -A x64
 if %ERRORLEVEL% NEQ 0 (
     echo Configuration failed.
@@ -51,10 +51,18 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 :: Build
-echo [2/2] Compiling Release build...
+echo [2/3] Compiling Release build...
 cmake --build build --config Release
 if %ERRORLEVEL% NEQ 0 (
     echo Build failed.
+    exit /b %ERRORLEVEL%
+)
+
+:: Test
+echo [3/3] Running tests...
+ctest --test-dir build --build-config Release --output-on-failure
+if %ERRORLEVEL% NEQ 0 (
+    echo Tests failed.
     exit /b %ERRORLEVEL%
 )
 
