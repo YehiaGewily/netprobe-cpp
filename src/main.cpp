@@ -1,10 +1,4 @@
 #include <iostream>
-#include "capture/CaptureEngine.hpp"
-#include "core/PacketQueue.hpp"
-#include "core/PacketData.hpp"
-
-// Simple test to verify compilation and linking of CaptureEngine
-#include <iostream>
 #include <vector>
 #include "capture/CaptureEngine.hpp"
 #include "core/PacketQueue.hpp"
@@ -20,8 +14,7 @@ int main() {
     // 2. Select Network Adapter
     auto devices = engine.getAvailableDevices();
     if (devices.empty()) {
-        std::cerr << "Error: No network devices found. Ensure Npcap is installed." << std::endl;
-        return 1;
+        std::cerr << "No live network devices found. Offline PCAP loading is still available." << std::endl;
     }
 
     // Convert capture::DeviceInfo to ui::GuiLayer::DeviceInfo
@@ -36,21 +29,36 @@ int main() {
     // Pass devices to UI
     gui.setDevices(uiDevices);
 
-    // Handle Device Selection
+    if (!gui.init()) {
+        std::cerr << "Failed to initialize GUI." << std::endl;
+        return 1;
+    }
+
+    // Handle Device Selection only after the UI is ready to consume packets.
     gui.onDeviceSelected = [&](std::string deviceName) {
         std::cout << "Switching to device: " << deviceName << std::endl;
         engine.startCapture(deviceName);
     };
 
-    // Auto-start on the first device
+    gui.onPcapFileSelected = [&](std::string path) {
+        std::cout << "Loading capture file: " << path << std::endl;
+        if (!engine.openFile(path)) {
+            std::cerr << "Failed to load capture file." << std::endl;
+        }
+    };
+
+    gui.onBpfFilterRequested = [&](const std::string& filter, std::string& error) {
+        return engine.setFilter(filter, error);
+    };
+
+    gui.onPcapSaveRequested = [&](const std::string& path, std::string& error) {
+        return engine.exportSession(path, error);
+    };
+
+    // Auto-start on the first device when live capture is available.
     if (!devices.empty()) {
         std::cout << "Auto-selecting device: " << devices[0].description << std::endl;
         engine.startCapture(devices[0].name);
-    }
-
-    if (!gui.init()) {
-        std::cerr << "Failed to initialize GUI." << std::endl;
-        return 1;
     }
 
     // This blocks until window is closed

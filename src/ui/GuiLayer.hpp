@@ -2,12 +2,18 @@
 
 #include "core/PacketQueue.hpp"
 #include "core/ParsedPacket.hpp"
+#include "core/HostnameCache.hpp"
+#include "core/FlowAggregator.hpp"
+#include "core/GeoIPResolver.hpp"
 #include <vector>
 #include <string>
 #include <map>
 #include <deque>
+#include <functional>
+#include <optional>
 
 struct GLFWwindow;
+struct ImFont;
 
 namespace ui {
 
@@ -67,6 +73,13 @@ namespace ui {
         // Callback to start capture on new device
         std::function<void(std::string)> onDeviceSelected;
 
+        // Callback to load an offline capture file.
+        std::function<void(std::string)> onPcapFileSelected;
+
+        // Callbacks for live BPF filtering and exporting the retained raw session.
+        std::function<bool(const std::string&, std::string&)> onBpfFilterRequested;
+        std::function<bool(const std::string&, std::string&)> onPcapSaveRequested;
+
     private:
         core::PacketQueue& m_queue;
         GLFWwindow* m_window = nullptr;
@@ -78,20 +91,55 @@ namespace ui {
         // UI State
         std::deque<core::ParsedPacket> m_packetHistory;
         bool m_autoScroll = true;
+        std::optional<core::FlowKey> m_packetFlowFilter;
+        int m_flowSortColumn = 7;
+        bool m_flowSortAscending = false;
         
         // Statistics
         std::map<std::string, int> m_appCounts;
+        core::HostnameCache m_hostnameCache;
+        core::FlowAggregator m_flowAggregator;
+        core::GeoIPResolver m_geoIPResolver;
         ScrollingBuffer m_bandwidthData;
         double m_lastUpdateTime = 0.0;
         uint64_t m_bytesThisSec = 0;
+        uint64_t m_totalPackets = 0;
+        std::vector<float> m_linearBandwidthTime;
+        std::vector<float> m_linearBandwidthData;
+        bool m_nfdInitialized = false;
+        char m_bpfFilter[256]{};
+        std::string m_captureStatus;
+        bool m_captureStatusIsError = false;
 
         void processQueue();
         void renderUI();
-        
+        void clearCaptureView();
+        void openPcapFile(const std::string& path);
+        void applyTheme();
+        void loadFonts();
+
         // Panels
-        void renderMenuBar();
+        void renderTopBar();
+        void renderControlBar();
         void renderPacketTable();
         void renderCharts();
+        void renderFlowsTable();
+        void renderKpiStrip();
+
+        // Cached metrics for header tiles
+        float m_currentMbps = 0.0f;
+        float m_peakMbps = 0.0f;
+        size_t m_activeFlowCount = 0;
+        std::string m_topService;
+        int m_topServiceCount = 0;
+
+        // Fonts loaded in init().
+        ImFont* m_fontDefault = nullptr;
+        ImFont* m_fontSmall = nullptr;
+        ImFont* m_fontHeadline = nullptr;
+        ImFont* m_fontBrand = nullptr;
+
+        bool m_layoutBuilt = false;
     };
 
 } // namespace ui

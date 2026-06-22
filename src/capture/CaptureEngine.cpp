@@ -1,105 +1,169 @@
-#define HAVE_REMOTE
 #include "capture/CaptureEngine.hpp"
+#include "capture/PcapPlatform.hpp"
 #include "core/PacketQueue.hpp"
-#include <pcap.h>
+
 #include <iostream>
+#include <vector>
 
 namespace capture {
 
     CaptureEngine::CaptureEngine(core::PacketQueue& queue)
         : m_queue(queue)
-    {
-    }
+        , m_backend(createPlatformCaptureBackend()) {}
 
     CaptureEngine::~CaptureEngine() {
         stopCapture();
     }
 
     std::vector<DeviceInfo> CaptureEngine::getAvailableDevices() const {
-        std::vector<DeviceInfo> devices;
-        pcap_if_t* alldevs;
-        char errbuf[PCAP_ERRBUF_SIZE];
-
-        // Retrieve the device list from the local machine
-        if (pcap_findalldevs_ex(PCAP_SRC_IF_STRING, NULL, &alldevs, errbuf) == -1) {
-            std::cerr << "Error in pcap_findalldevs_ex: " << errbuf << std::endl;
-            return devices;
-        }
-
-        for (pcap_if_t* d = alldevs; d; d = d->next) {
-            std::string name = d->name ? d->name : "Unknown";
-            std::string desc = d->description ? d->description : "No Description";
-            devices.push_back({name, desc});
-        }
-
-        pcap_freealldevs(alldevs);
+        std::string error;
+        auto devices = m_backend->listDevices(error);
+        if (!error.empty()) std::cerr << "Unable to list capture devices: " << error << std::endl;
         return devices;
     }
 
     void CaptureEngine::startCapture(const std::string& deviceName) {
-        stopCapture(); // Ensure any previous session is closed
-
+        stopCapture();
+        m_queue.clear();
+        clearSession();
         m_currentDevice = deviceName;
-        char errbuf[PCAP_ERRBUF_SIZE];
 
-        // Open the adapter
-        // Snaplen 65536, Promiscuous Mode, 1000ms read timeout
-        m_handle = pcap_open(deviceName.c_str(), 65536, PCAP_OPENFLAG_PROMISCUOUS, 1000, NULL, errbuf);
-
-        if (m_handle == NULL) {
-            std::cerr << "Unable to open adapter " << deviceName << ". Error: " << errbuf << std::endl;
+        std::string error;
+        if (!m_backend->open(deviceName, error)) {
+            std::cerr << "Unable to open adapter " << deviceName << ": " << error << std::endl;
+            return;
+        }
+        if (!m_activeFilter.empty() && !m_backend->setFilter(m_activeFilter, error)) {
+            std::cerr << "Unable to apply BPF filter '" << m_activeFilter << "': " << error << std::endl;
+            m_backend->close();
             return;
         }
 
-        // Start the capture thread
-        m_captureThread = std::jthread([this](std::stop_token stoken) {
-            this->captureLoop(stoken);
-        });
+        m_stopRequested.store(false, std::memory_order_release);
+        m_captureThread = std::thread([this] { captureLoop(); });
+    }
+
+    bool CaptureEngine::openFile(const std::string& path) {
+        stopCapture();
+        m_queue.clear();
+        clearSession();
+        m_currentDevice.clear();
+
+        std::string error;
+        if (!m_backend->openFile(path, error)) {
+            std::cerr << "Unable to open capture file '" << path << "': " << error << std::endl;
+            return false;
+        }
+
+        bool succeeded = true;
+        while (true) {
+            core::PacketData packet;
+            switch (m_backend->nextPacket(packet, error)) {
+            case PacketReadStatus::Packet:
+                consumePacket(std::move(packet));
+                break;
+            case PacketReadStatus::Timeout:
+                break;
+            case PacketReadStatus::EndOfFile:
+                m_backend->close();
+                return succeeded;
+            case PacketReadStatus::Error:
+                std::cerr << "Error while reading capture file '" << path << "': " << error << std::endl;
+                succeeded = false;
+                m_backend->close();
+                return succeeded;
+            }
+        }
+    }
+
+    bool CaptureEngine::setFilter(const std::string& filter, std::string& error) {
+        if (!m_captureThread.joinable() || !m_backend->isOpen()) {
+            error = "A live capture must be running before a BPF filter can be applied.";
+            return false;
+        }
+        if (!m_backend->setFilter(filter, error)) return false;
+        m_activeFilter = filter;
+        return true;
+    }
+
+    bool CaptureEngine::exportSession(const std::string& path, std::string& error) const {
+        std::vector<core::PacketData> packets;
+        {
+            std::lock_guard<std::mutex> lock(m_sessionMutex);
+            packets.assign(m_sessionPackets.begin(), m_sessionPackets.end());
+        }
+
+        pcap_t* deadHandle = pcap_open_dead(DLT_EN10MB, 65536);
+        if (!deadHandle) {
+            error = "Unable to create a PCAP writer.";
+            return false;
+        }
+        pcap_dumper_t* dumper = pcap_dump_open(deadHandle, path.c_str());
+        if (!dumper) {
+            error = pcap_geterr(deadHandle);
+            pcap_close(deadHandle);
+            return false;
+        }
+
+        static const uint8_t emptyPacket = 0;
+        for (const auto& packet : packets) {
+            pcap_pkthdr header{};
+            header.ts.tv_sec = static_cast<long>(packet.timestamp / 1'000'000);
+            header.ts.tv_usec = static_cast<long>(packet.timestamp % 1'000'000);
+            header.caplen = static_cast<bpf_u_int32>(packet.payload.size());
+            header.len = static_cast<bpf_u_int32>(packet.length);
+            const auto* bytes = packet.payload.empty() ? &emptyPacket : packet.payload.data();
+            pcap_dump(reinterpret_cast<unsigned char*>(dumper), &header, bytes);
+        }
+
+        pcap_dump_close(dumper);
+        pcap_close(deadHandle);
+        return true;
     }
 
     void CaptureEngine::stopCapture() {
-        // Request stop via jthread destructor or explicit request
         if (m_captureThread.joinable()) {
-            m_captureThread.request_stop();
-            // We must break the loop manually if it's stuck in pcap_loop
-            if (m_handle) {
-                pcap_breakloop(m_handle);
-            }
+            m_stopRequested.store(true, std::memory_order_release);
             m_captureThread.join();
         }
+        m_backend->close();
+    }
 
-        if (m_handle) {
-            pcap_close(m_handle);
-            m_handle = nullptr;
+    void CaptureEngine::captureLoop() {
+        while (!m_stopRequested.load(std::memory_order_acquire)) {
+            core::PacketData packet;
+            std::string error;
+            switch (m_backend->nextPacket(packet, error)) {
+            case PacketReadStatus::Packet:
+                consumePacket(std::move(packet));
+                break;
+            case PacketReadStatus::Timeout:
+                break;
+            case PacketReadStatus::EndOfFile:
+                return;
+            case PacketReadStatus::Error:
+                if (!m_stopRequested.load(std::memory_order_acquire)) {
+                    std::cerr << "Capture error: " << error << std::endl;
+                }
+                return;
+            }
         }
     }
 
-    void CaptureEngine::captureLoop(std::stop_token stoken) {
-        if (!m_handle) return;
-
-        // Register a stop callback to break the pcap loop immediately when stop is requested
-        std::stop_callback callback(stoken, [this]() {
-            if (m_handle) {
-                pcap_breakloop(m_handle);
-            }
-        });
-
-        // Start the capture loop
-        // 0 = infinite loop until error or breakloop
-        pcap_loop(m_handle, 0, CaptureEngine::packetHandler, reinterpret_cast<unsigned char*>(this));
+    void CaptureEngine::clearSession() {
+        std::lock_guard<std::mutex> lock(m_sessionMutex);
+        m_sessionPackets.clear();
     }
 
-    void CaptureEngine::packetHandler(unsigned char* user, const struct pcap_pkthdr* pkthdr, const unsigned char* packet) {
-        auto* engine = reinterpret_cast<CaptureEngine*>(user);
-        
-        // Convert timestamp struct timeval (sec, usec) to microseconds
-        int64_t ts = static_cast<int64_t>(pkthdr->ts.tv_sec) * 1000000 + pkthdr->ts.tv_usec;
-        
-        // Create PacketData (deep copy of payload)
-        core::PacketData data(ts, pkthdr->caplen, packet);
-        
-        // Push to queue
-        engine->m_queue.push(std::move(data));
+    void CaptureEngine::retainPacket(const core::PacketData& packet) {
+        std::lock_guard<std::mutex> lock(m_sessionMutex);
+        if (m_sessionPackets.size() >= maxSessionPackets) m_sessionPackets.pop_front();
+        m_sessionPackets.push_back(packet);
+    }
+
+    void CaptureEngine::consumePacket(core::PacketData&& packet) {
+        retainPacket(packet);
+        m_queue.push(std::move(packet));
     }
 
 } // namespace capture
