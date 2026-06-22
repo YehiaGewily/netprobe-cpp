@@ -5,24 +5,28 @@
 #include <mutex>
 #include <condition_variable>
 #include <optional>
+#include <cstddef>
 
 namespace core {
 
     class PacketQueue {
     public:
+        explicit PacketQueue(size_t maxSize = 50'000)
+            : m_maxSize(maxSize > 0 ? maxSize : 1) {}
+
         // Push a packet into the queue
         void push(const PacketData& packet) {
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_queue.push(packet);
-            }
-            m_cv.notify_one();
+            push(PacketData(packet));
         }
 
         // Push a packet (move semantics)
         void push(PacketData&& packet) {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_queue.size() >= m_maxSize) {
+                    m_queue.pop();
+                    ++m_droppedPackets;
+                }
                 m_queue.push(std::move(packet));
             }
             m_cv.notify_one();
@@ -58,6 +62,11 @@ namespace core {
             return m_queue.empty();
         }
 
+        size_t droppedPackets() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_droppedPackets;
+        }
+
         void clear() {
             std::lock_guard<std::mutex> lock(m_mutex);
             std::queue<PacketData> empty;
@@ -66,6 +75,8 @@ namespace core {
 
     private:
         std::queue<PacketData> m_queue;
+        size_t m_maxSize;
+        size_t m_droppedPackets = 0;
         mutable std::mutex m_mutex;
         std::condition_variable m_cv;
     };

@@ -1,10 +1,15 @@
 #include "core/ProtocolParser.hpp"
-#include <sstream>
-#include <iomanip>
-#include <vector>
-#include <winsock2.h> // For ntohs, ntohl, etc. -> ws2_32 linked in cmake
+#include "core/NetworkPlatform.hpp"
+#include <algorithm>
+#include <cstring>
 
 namespace core {
+
+    namespace {
+        uint16_t readU16(const uint8_t* bytes) {
+            return static_cast<uint16_t>(bytes[0]) << 8 | bytes[1];
+        }
+    }
 
     ParsedPacket ProtocolParser::parse(const PacketData& rawData) {
         ParsedPacket parsed;
@@ -16,12 +21,19 @@ namespace core {
         size_t size = rawData.payload.size();
         size_t offset = 0;
 
-        // 1. Ethernet Parsing
+        // 1. Ethernet parsing. Read individual bytes rather than dereferencing
+        // unaligned headers from an arbitrary capture buffer.
         if (size < sizeof(EthernetHeader)) return parsed;
-        const EthernetHeader* eth = reinterpret_cast<const EthernetHeader*>(buffer + offset);
         offset += sizeof(EthernetHeader);
 
-        uint16_t ethType = ntohs(eth->type);
+        uint16_t ethType = readU16(buffer + 12);
+        // Support one or more 802.1Q/QinQ VLAN tags before the IP packet.
+        while (ethType == 0x8100 || ethType == 0x88A8 || ethType == 0x9100) {
+            if (size < offset + 4) return parsed;
+            ethType = readU16(buffer + offset + 2);
+            offset += 4;
+        }
+
         if (ethType != 0x0800) { // Not IPv4
             parsed.protocol = "Non-IPv4";
             return parsed;
@@ -29,135 +41,137 @@ namespace core {
 
         // 2. IPv4 Parsing
         if (size < offset + sizeof(IPv4Header)) return parsed;
-        const IPv4Header* ip = reinterpret_cast<const IPv4Header*>(buffer + offset);
-        
-        // IHL is in the lower 4 bits of the first byte (usually) but actually it's Version(4)+IHL(4) 
-        // Logic: Version is high nibble, IHL is low nibble.
-        uint8_t ihl = (ip->versionHlen & 0x0F) * 4;
-        
-        parsed.srcIP = ipToString(ip->srcAddr);
-        parsed.dstIP = ipToString(ip->dstAddr);
+        const uint8_t versionHlen = buffer[offset];
+        const uint8_t version = versionHlen >> 4;
+        const size_t ihl = (versionHlen & 0x0F) * 4;
+        if (version != 4 || ihl < sizeof(IPv4Header) || size < offset + ihl) return parsed;
 
-        offset += ihl; // Move past IP header (options included if any)
+        const uint16_t totalLength = readU16(buffer + offset + 2);
+        if (totalLength < ihl) return parsed;
+        const size_t packetEnd = std::min(size, offset + static_cast<size_t>(totalLength));
+
+        uint32_t srcAddr;
+        uint32_t dstAddr;
+        std::memcpy(&srcAddr, buffer + offset + 12, sizeof(srcAddr));
+        std::memcpy(&dstAddr, buffer + offset + 16, sizeof(dstAddr));
+        parsed.srcIP = ipToString(srcAddr);
+        parsed.dstIP = ipToString(dstAddr);
+
+        const uint16_t flagsAndFragmentOffset = readU16(buffer + offset + 6);
+        if ((flagsAndFragmentOffset & 0x1FFF) != 0) {
+            parsed.protocol = "IPv4 Fragment";
+            return parsed;
+        }
+
+        const uint8_t protocol = buffer[offset + 9];
+        offset += ihl; // Move past IP header (including options)
 
         // 3. Layer 4 Parsing
-        if (ip->protocol == 6) { // TCP
+        if (protocol == 6) { // TCP
             parsed.protocol = "TCP";
-            if (size < offset + sizeof(TCPHeader)) return parsed;
-            const TCPHeader* tcp = reinterpret_cast<const TCPHeader*>(buffer + offset);
+            if (packetEnd < offset + sizeof(TCPHeader)) return parsed;
             
-            parsed.srcPort = ntohs(tcp->srcPort);
-            parsed.dstPort = ntohs(tcp->dstPort);
+            parsed.srcPort = readU16(buffer + offset);
+            parsed.dstPort = readU16(buffer + offset + 2);
             
             // TCP Header Length (Data Offset) is high 4 bits of dataOffsetReserved, multiplied by 4
-            uint8_t tcpHeaderLen = ((tcp->dataOffsetReserved >> 4) & 0x0F) * 4;
+            const size_t tcpHeaderLen = (buffer[offset + 12] >> 4) * 4;
+            if (tcpHeaderLen < sizeof(TCPHeader) || packetEnd < offset + tcpHeaderLen) return parsed;
             size_t payloadOffset = offset + tcpHeaderLen;
             
             // Check for Payload
-            if (payloadOffset < size) {
+            if (payloadOffset < packetEnd) {
                 // DPI: Check TLS Client Hello on Port 443
                 if (parsed.dstPort == 443 || parsed.srcPort == 443) {
-                    parseTLS(buffer + payloadOffset, size - payloadOffset, parsed);
+                    parseTLS(buffer + payloadOffset, packetEnd - payloadOffset, parsed);
                 }
             }
 
-        } else if (ip->protocol == 17) { // UDP
+        } else if (protocol == 17) { // UDP
             parsed.protocol = "UDP";
-            if (size < offset + sizeof(UDPHeader)) return parsed;
-            const UDPHeader* udp = reinterpret_cast<const UDPHeader*>(buffer + offset);
-            
-            parsed.srcPort = ntohs(udp->srcPort);
-            parsed.dstPort = ntohs(udp->dstPort);
+            if (packetEnd < offset + sizeof(UDPHeader)) return parsed;
+            parsed.srcPort = readU16(buffer + offset);
+            parsed.dstPort = readU16(buffer + offset + 2);
         }
 
         return parsed;
     }
 
     std::string ProtocolParser::ipToString(uint32_t ip) {
-        // IP in header is network byte order (Big Endian)
-        unsigned char bytes[4];
-        bytes[0] = ip & 0xFF;
-        bytes[1] = (ip >> 8) & 0xFF;
-        bytes[2] = (ip >> 16) & 0xFF;
-        bytes[3] = (ip >> 24) & 0xFF;
-        
-        std::ostringstream oss;
-        oss << (int)bytes[0] << "." << (int)bytes[1] << "." << (int)bytes[2] << "." << (int)bytes[3];
-        return oss.str();
+        char address[INET_ADDRSTRLEN]{};
+        return inet_ntop(AF_INET, &ip, address, sizeof(address)) ? address : "";
     }
 
     void ProtocolParser::parseTLS(const uint8_t* payload, size_t len, ParsedPacket& outPacket) {
-        // Minimum length for a Client Hello
-        if (len < 43) return;
+        constexpr size_t recordHeaderLength = 5;
+        constexpr size_t handshakeHeaderLength = 4;
+        constexpr size_t clientHelloFixedLength = 34; // Version + random
 
-        // Content Type: 0x16 (Handshake)
-        if (payload[0] != 0x16) return;
+        if (len < recordHeaderLength || payload[0] != 0x16) return; // TLS handshake record
 
-        // Handshake Version: 0x0301 (TLS 1.0) or 0x0303 (TLS 1.2) - typically 0x0301 in Record Layer
-        // Skip Record Layer Header (5 bytes: Type, VerMajor, VerMinor, Length)
-        size_t pos = 5;
-        if (pos >= len) return;
+        const size_t recordEnd = std::min(len, recordHeaderLength + static_cast<size_t>(readU16(payload + 3)));
+        size_t pos = recordHeaderLength;
+        if (recordEnd < pos + handshakeHeaderLength || payload[pos] != 0x01) return; // ClientHello
 
-        // Handshake Type: 0x01 (Client Hello)
-        if (payload[pos] != 0x01) return;
-        pos++;
+        const size_t handshakeLength = (static_cast<size_t>(payload[pos + 1]) << 16)
+            | (static_cast<size_t>(payload[pos + 2]) << 8) | payload[pos + 3];
+        pos += handshakeHeaderLength;
+        const size_t handshakeEnd = std::min(recordEnd, pos + handshakeLength);
+        if (handshakeEnd < pos + clientHelloFixedLength) return;
+        pos += clientHelloFixedLength;
 
-        // Skip Length(3), Version(2), Random(32)
-        pos += 37; 
-        if (pos >= len) return;
+        if (pos >= handshakeEnd) return;
+        const size_t sessionIdLength = payload[pos++];
+        if (sessionIdLength > handshakeEnd - pos) return;
+        pos += sessionIdLength;
 
-        // Session ID Length
-        uint8_t sessionIDLen = payload[pos];
-        pos += 1 + sessionIDLen;
-        if (pos >= len) return;
-
-        // Cipher Suites Length
-        if (pos + 2 > len) return;
-        uint16_t cipherSuitesLen = ntohs(*reinterpret_cast<const uint16_t*>(payload + pos));
-        pos += 2 + cipherSuitesLen;
-        if (pos >= len) return;
-
-        // Compression Methods Length
-        if (pos + 1 > len) return;
-        uint8_t compMethodsLen = payload[pos];
-        pos += 1 + compMethodsLen;
-        if (pos >= len) return;
-
-        // Extensions Length
-        if (pos + 2 > len) return;
-        uint16_t extensionsLen = ntohs(*reinterpret_cast<const uint16_t*>(payload + pos));
+        if (handshakeEnd - pos < 2) return;
+        const size_t cipherSuitesLength = readU16(payload + pos);
         pos += 2;
-        
-        // Loop through extensions
-        size_t extensionsEnd = pos + extensionsLen;
-        if (extensionsEnd > len) extensionsEnd = len;
+        if (cipherSuitesLength > handshakeEnd - pos) return;
+        pos += cipherSuitesLength;
 
-        while (pos + 4 <= extensionsEnd) {
-            uint16_t extType = ntohs(*reinterpret_cast<const uint16_t*>(payload + pos));
-            uint16_t extLen = ntohs(*reinterpret_cast<const uint16_t*>(payload + pos + 2));
+        if (pos >= handshakeEnd) return;
+        const size_t compressionMethodsLength = payload[pos++];
+        if (compressionMethodsLength > handshakeEnd - pos) return;
+        pos += compressionMethodsLength;
+
+        if (handshakeEnd - pos < 2) return;
+        const size_t extensionsLength = readU16(payload + pos);
+        pos += 2;
+        if (extensionsLength > handshakeEnd - pos) return;
+        const size_t extensionsEnd = pos + extensionsLength;
+
+        while (extensionsEnd - pos >= 4) {
+            const uint16_t extensionType = readU16(payload + pos);
+            const size_t extensionLength = readU16(payload + pos + 2);
             pos += 4;
+            if (extensionLength > extensionsEnd - pos) return;
+            const size_t extensionEnd = pos + extensionLength;
 
-            if (extType == 0x0000) { // SNI Extension
-                // Skip List Length (2)
-                if (pos + 2 <= extensionsEnd) {
+            if (extensionType == 0x0000) { // Server Name Indication
+                if (extensionEnd - pos < 2) return;
+                const size_t nameListLength = readU16(payload + pos);
+                pos += 2;
+                if (nameListLength > extensionEnd - pos) return;
+                const size_t nameListEnd = pos + nameListLength;
+
+                while (nameListEnd - pos >= 3) {
+                    const uint8_t nameType = payload[pos++];
+                    const size_t nameLength = readU16(payload + pos);
                     pos += 2;
-                    // Skip Name Type (1)
-                    if (pos + 1 <= extensionsEnd && payload[pos] == 0x00) { // Host Name
-                        pos++;
-                        // Name Length (2)
-                        if (pos + 2 <= extensionsEnd) {
-                            uint16_t nameLen = ntohs(*reinterpret_cast<const uint16_t*>(payload + pos));
-                            pos += 2;
-                            if (pos + nameLen <= extensionsEnd) {
-                                outPacket.sni = std::string(reinterpret_cast<const char*>(payload + pos), nameLen);
-                                outPacket.service = identifyService(outPacket.sni);
-                            }
-                        }
+                    if (nameLength > nameListEnd - pos) return;
+                    if (nameType == 0x00) {
+                        outPacket.sni = std::string(reinterpret_cast<const char*>(payload + pos), nameLength);
+                        outPacket.service = identifyService(outPacket.sni);
+                        return;
                     }
+                    pos += nameLength;
                 }
-                return; // Found SNI, done
+                return;
             }
-            pos += extLen;
+
+            pos = extensionEnd;
         }
     }
 
