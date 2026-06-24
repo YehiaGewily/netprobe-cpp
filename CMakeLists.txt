@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
 
+# AddressSanitizer + UndefinedBehaviorSanitizer for local debug runs and CI.
+# Clang/GCC only; MSVC ASan has compatibility caveats with the third-party
+# CMake projects we pull in, so we restrict this to non-MSVC compilers.
+option(ENABLE_SANITIZERS "Build with -fsanitize=address,undefined (Clang/GCC)" OFF)
+if(ENABLE_SANITIZERS AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # --- 1. Platform Capture Configuration ---
 if(WIN32)
     set(NPCAP_SDK_PATH "C:/Npcap-SDK" CACHE PATH "Path to the Npcap SDK root")
@@ -17,7 +26,7 @@ if(WIN32)
         message(FATAL_ERROR "Npcap SDK was not found at ${NPCAP_SDK_PATH}. Install the SDK or set NPCAP_SDK_PATH.")
     endif()
 
-    set(NETPROBE_APP_PLATFORM_LIBRARIES ws2_32 dwmapi opengl32)
+    set(NETPROBE_APP_PLATFORM_LIBRARIES ws2_32 iphlpapi dwmapi opengl32)
     set(NETPROBE_TEST_PLATFORM_LIBRARIES ws2_32)
 else()
     find_path(PCAP_INCLUDE_DIR NAMES pcap.h pcap/pcap.h REQUIRED)
@@ -71,6 +80,20 @@ FetchContent_Declare(
     GIT_TAG        v1.2.1
 )
 FetchContent_MakeAvailable(nfd)
+
+# Mbed TLS provides the crypto primitives used by the QUIC parser
+# (HKDF-SHA256, AES-128-ECB, AES-128-GCM) to decrypt QUIC Initial packets and
+# extract the inner TLS 1.3 ClientHello SNI.
+message(STATUS "Fetching Mbed TLS...")
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    mbedtls
+    GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+    GIT_TAG        v3.6.2
+)
+FetchContent_MakeAvailable(mbedtls)
 
 # Local MaxMind DB reader used for optional GeoLite2 Country/ASN enrichment.
 message(STATUS "Fetching libmaxminddb...")
@@ -152,6 +175,7 @@ target_link_libraries(NetProbe PRIVATE
     glfw
     nfd::nfd
     maxminddb::maxminddb
+    MbedTLS::mbedcrypto
     ${PCAP_LIBRARIES}
     ${NETPROBE_APP_PLATFORM_LIBRARIES}
 )
@@ -170,6 +194,24 @@ set(CPACK_PACKAGE_FILE_NAME "NetProbe-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 include(CPack)
 
+# --- 7.5 Sample PCAP generator ---
+# Produces data/sample.pcap from a small generator program. The file is a build
+# artifact (gitignored) but ends up in releases via the install rule above, so
+# users can immediately try File → Open PCAP without admin rights.
+add_executable(NetProbeMakeSamplePcap tools/make_sample_pcap.cpp)
+target_include_directories(NetProbeMakeSamplePcap PRIVATE tests)
+
+set(_netprobe_sample_pcap "${CMAKE_SOURCE_DIR}/data/sample.pcap")
+add_custom_command(
+    OUTPUT  "${_netprobe_sample_pcap}"
+    COMMAND NetProbeMakeSamplePcap "${_netprobe_sample_pcap}"
+    DEPENDS NetProbeMakeSamplePcap
+    COMMENT "Generating data/sample.pcap"
+    VERBATIM
+)
+add_custom_target(NetProbeSamplePcap ALL DEPENDS "${_netprobe_sample_pcap}")
+add_dependencies(NetProbe NetProbeSamplePcap)
+
 if(BUILD_TESTING)
     enable_testing()
     add_executable(NetProbeTests
@@ -178,17 +220,20 @@ if(BUILD_TESTING)
         src/core/FlowAggregator.cpp
         src/core/GeoIPResolver.cpp
         src/core/ProtocolParser.cpp
+        src/core/QuicParser.cpp
         src/capture/CaptureEngine.cpp
         src/capture/NpcapBackend.cpp
         src/capture/LibpcapBackend.cpp
     )
     target_include_directories(NetProbeTests PRIVATE
         src
+        tests
         ${PCAP_INCLUDE_DIR}
     )
     target_link_libraries(NetProbeTests PRIVATE
         GTest::gtest_main
         maxminddb::maxminddb
+        MbedTLS::mbedcrypto
         ${PCAP_LIBRARIES}
         ${NETPROBE_TEST_PLATFORM_LIBRARIES}
     )
@@ -199,5 +244,46 @@ if(BUILD_TESTING)
     gtest_discover_tests(NetProbeTests)
 endif()
 
-# Define generic Macros if needed
-# target_compile_definitions(NetProbe PRIVATE ...)
+# --- 8. Fuzz Harnesses (optional) ---
+# Build libFuzzer harnesses for the protocol parsers. Requires Clang (libFuzzer
+# is a Clang-native instrumentation). On Windows, configure with the clang-cl
+# toolchain shipped with Visual Studio rather than MSVC. The CI fuzz job runs
+# Ubuntu + clang.
+#
+#   cmake -S . -B build -DBUILD_FUZZERS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+#   cmake --build build --target NetProbeFuzzerSeeds NetProbeParserFuzzer
+#   ./build/NetProbeFuzzerSeeds build/corpus
+#   ./build/NetProbeParserFuzzer build/corpus -max_total_time=60
+option(BUILD_FUZZERS "Build libFuzzer harnesses for the protocol parsers" OFF)
+
+if(BUILD_FUZZERS)
+    # The seed generator is plain C++ and always builds, even under MSVC, so a
+    # Windows developer can inspect/regenerate the corpus without a Clang setup.
+    add_executable(NetProbeFuzzerSeeds tests/fuzz/seed_generator.cpp)
+    target_include_directories(NetProbeFuzzerSeeds PRIVATE tests)
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_executable(NetProbeParserFuzzer
+            tests/fuzz/parser_fuzzer.cpp
+            src/core/DNSParser.cpp
+            src/core/ProtocolParser.cpp
+        )
+        target_include_directories(NetProbeParserFuzzer PRIVATE
+            src
+            ${PCAP_INCLUDE_DIR}
+        )
+        target_link_libraries(NetProbeParserFuzzer PRIVATE
+            ${NETPROBE_TEST_PLATFORM_LIBRARIES}
+        )
+        target_compile_options(NetProbeParserFuzzer PRIVATE
+            -fsanitize=fuzzer,address,undefined
+            -fno-omit-frame-pointer -g)
+        target_link_options(NetProbeParserFuzzer PRIVATE
+            -fsanitize=fuzzer,address,undefined)
+    else()
+        message(STATUS
+            "BUILD_FUZZERS=ON with non-Clang compiler '${CMAKE_CXX_COMPILER_ID}'. "
+            "Only NetProbeFuzzerSeeds will be built — use clang/clang-cl for the "
+            "fuzz harness itself.")
+    endif()
+endif()

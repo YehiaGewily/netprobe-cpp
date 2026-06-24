@@ -68,6 +68,9 @@ imgui.ini
 /data/*.mmdb
 /data/*.mmdb.gz
 /data/*.tar.gz
+
+# Sample PCAP is generated at build time by NetProbeMakeSamplePcap.
+/data/sample.pcap
 .env
 .env.*
 !.env.example
@@ -94,3 +97,16 @@ Thumbs.db
 
 # --- Agent Workspace Cache ---
 /.agents/
+
+# --- Demo Recording ---
+/docs/record-demo.md
+
+# --- libFuzzer Artifacts ---
+# Crash / leak / timeout inputs and stats files written by libFuzzer at runtime.
+crash-*
+leak-*
+oom-*
+timeout-*
+slow-unit-*
+fuzz-*.log
+

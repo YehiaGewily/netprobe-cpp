@@ -1,3 +1,5 @@
+#include "PacketBuilders.hpp"
+
 #include "capture/CaptureEngine.hpp"
 #include "core/DNSParser.hpp"
 #include "core/FlowAggregator.hpp"
@@ -5,93 +7,23 @@
 #include "core/HostnameCache.hpp"
 #include "core/PacketQueue.hpp"
 #include "core/ProtocolParser.hpp"
+#include "core/QuicParser.hpp"
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
 
-    void appendU16(std::vector<uint8_t>& bytes, uint16_t value) {
-        bytes.push_back(static_cast<uint8_t>(value >> 8));
-        bytes.push_back(static_cast<uint8_t>(value & 0xFF));
-    }
-
-    void appendU32LE(std::vector<uint8_t>& bytes, uint32_t value) {
-        bytes.push_back(static_cast<uint8_t>(value & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
-    }
-
-    void appendU32BE(std::vector<uint8_t>& bytes, uint32_t value) {
-        bytes.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>(value & 0xFF));
-    }
-
-    void appendDnsName(std::vector<uint8_t>& bytes, const std::string& name) {
-        size_t labelStart = 0;
-        while (labelStart < name.size()) {
-            const size_t labelEnd = name.find('.', labelStart);
-            const size_t labelLength = (labelEnd == std::string::npos ? name.size() : labelEnd) - labelStart;
-            bytes.push_back(static_cast<uint8_t>(labelLength));
-            bytes.insert(bytes.end(), name.begin() + static_cast<std::ptrdiff_t>(labelStart),
-                name.begin() + static_cast<std::ptrdiff_t>(labelStart + labelLength));
-            if (labelEnd == std::string::npos) break;
-            labelStart = labelEnd + 1;
-        }
-        bytes.push_back(0x00);
-    }
-
-    void appendEthernetHeader(std::vector<uint8_t>& bytes, uint16_t etherType) {
-        bytes.insert(bytes.end(), {0x00, 0x11, 0x22, 0x33, 0x44, 0x55});
-        bytes.insert(bytes.end(), {0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB});
-        appendU16(bytes, etherType);
-    }
-
-    void appendIPv4Header(std::vector<uint8_t>& bytes, uint16_t totalLength, uint8_t protocol,
-        const std::vector<uint8_t>& source, const std::vector<uint8_t>& destination) {
-        bytes.insert(bytes.end(), {0x45, 0x00});
-        appendU16(bytes, totalLength);
-        bytes.insert(bytes.end(), {0x00, 0x01, 0x40, 0x00, 64, protocol, 0x00, 0x00});
-        bytes.insert(bytes.end(), source.begin(), source.end());
-        bytes.insert(bytes.end(), destination.begin(), destination.end());
-    }
-
-    std::vector<uint8_t> makeTlsClientHello(const std::string& hostname) {
-        std::vector<uint8_t> body = {0x03, 0x03};
-        body.insert(body.end(), 32, 0x00); // ClientHello random
-        body.push_back(0x00); // Empty session ID
-        appendU16(body, 2);
-        appendU16(body, 0x1301);
-        body.insert(body.end(), {0x01, 0x00}); // Null compression
-
-        std::vector<uint8_t> extensions;
-        appendU16(extensions, 0x0000); // Server Name Indication
-        appendU16(extensions, static_cast<uint16_t>(5 + hostname.size()));
-        appendU16(extensions, static_cast<uint16_t>(3 + hostname.size()));
-        extensions.push_back(0x00); // host_name
-        appendU16(extensions, static_cast<uint16_t>(hostname.size()));
-        extensions.insert(extensions.end(), hostname.begin(), hostname.end());
-        appendU16(body, static_cast<uint16_t>(extensions.size()));
-        body.insert(body.end(), extensions.begin(), extensions.end());
-
-        std::vector<uint8_t> record = {0x16, 0x03, 0x01};
-        appendU16(record, static_cast<uint16_t>(4 + body.size()));
-        record.push_back(0x01); // ClientHello handshake
-        record.push_back(static_cast<uint8_t>(body.size() >> 16));
-        record.push_back(static_cast<uint8_t>(body.size() >> 8));
-        record.push_back(static_cast<uint8_t>(body.size()));
-        record.insert(record.end(), body.begin(), body.end());
-        return record;
-    }
+    using namespace test;
 
     void writePcap(const std::filesystem::path& path, const std::vector<uint8_t>& packet) {
         std::vector<uint8_t> bytes;
@@ -201,7 +133,10 @@ TEST_F(OfflinePcapTest, LoadsArpFixture) {
     const auto packets = loadFixture(fixture);
 
     ASSERT_EQ(packets.size(), 1u);
-    EXPECT_EQ(packets[0].protocol, "Non-IPv4");
+    EXPECT_EQ(packets[0].protocol, "ARP");
+    EXPECT_EQ(packets[0].srcIP, "192.168.1.10");
+    EXPECT_EQ(packets[0].dstIP, "192.168.1.1");
+    EXPECT_EQ(packets[0].service, "ARP request");
 }
 
 TEST_F(OfflinePcapTest, ExportsRetainedSessionAsReadablePcap) {
@@ -360,4 +295,445 @@ TEST(GeoIPResolverTest, ReadsCountryAndAsnFromMaxMindDatabases) {
 
     // Repeat the first lookup to exercise the LRU cache path.
     EXPECT_EQ(resolver.lookup("2.125.160.216").country, "GB");
+}
+
+namespace {
+    core::ParsedPacket makeTcpFlowPacket(int64_t timestamp,
+                                         std::string srcIP,
+                                         std::string dstIP,
+                                         uint16_t srcPort,
+                                         uint16_t dstPort,
+                                         uint32_t length) {
+        core::ParsedPacket packet;
+        packet.timestamp = timestamp;
+        packet.srcIP = std::move(srcIP);
+        packet.dstIP = std::move(dstIP);
+        packet.srcPort = srcPort;
+        packet.dstPort = dstPort;
+        packet.protocol = "TCP";
+        packet.length = length;
+        return packet;
+    }
+}
+
+TEST(FlowAggregatorTest, SeparatesIndependentFlows) {
+    core::FlowAggregator flows;
+    flows.update(makeTcpFlowPacket(1'000, "192.168.1.10", "1.1.1.1", 51000, 443, 100));
+    flows.update(makeTcpFlowPacket(2'000, "192.168.1.10", "8.8.8.8", 51001, 443, 200));
+    flows.update(makeTcpFlowPacket(3'000, "192.168.1.10", "1.1.1.1", 51000, 443, 50));
+
+    const auto snapshot = flows.snapshot(4'000);
+    ASSERT_EQ(snapshot.size(), 2u);
+    uint64_t total = 0;
+    for (const auto& flow : snapshot) total += flow.bytesUp + flow.bytesDown;
+    EXPECT_EQ(total, 350u);
+}
+
+TEST(FlowAggregatorTest, IgnoresNonIpProtocols) {
+    core::ParsedPacket arp;
+    arp.protocol = "ARP";
+    arp.srcIP = "192.168.1.10";
+    arp.dstIP = "192.168.1.1";
+    arp.length = 60;
+
+    core::FlowAggregator flows;
+    flows.update(arp);
+    EXPECT_TRUE(flows.snapshot(0).empty());
+    EXPECT_FALSE(core::FlowAggregator::keyFor(arp).has_value());
+}
+
+TEST(FlowAggregatorTest, RateExcludesSamplesOlderThanOneSecond) {
+    core::FlowAggregator flows;
+    constexpr int64_t base = 10'000'000;
+    flows.update(makeTcpFlowPacket(base, "192.168.1.10", "1.1.1.1", 51000, 443, 1000));
+    flows.update(makeTcpFlowPacket(base + 500'000, "192.168.1.10", "1.1.1.1", 51000, 443, 1000));
+    flows.update(makeTcpFlowPacket(base + 2'000'000, "192.168.1.10", "1.1.1.1", 51000, 443, 500));
+
+    // At base + 2.5s, only the third sample falls within the trailing 1s window.
+    const auto snapshot = flows.snapshot(base + 2'500'000);
+    ASSERT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.front().packets, 3u);
+    EXPECT_DOUBLE_EQ(snapshot.front().rateBytesPerSecond, 500.0);
+}
+
+TEST(FlowAggregatorTest, SetHostnameForAddressAppliesToMatchingFlows) {
+    core::FlowAggregator flows;
+    flows.update(makeTcpFlowPacket(1'000, "192.168.1.10", "93.184.216.34", 51000, 443, 100));
+    flows.update(makeTcpFlowPacket(2'000, "192.168.1.10", "8.8.8.8", 51001, 443, 100));
+    flows.setHostnameForAddress("93.184.216.34", "example.com");
+
+    const auto snapshot = flows.snapshot(3'000);
+    ASSERT_EQ(snapshot.size(), 2u);
+    for (const auto& flow : snapshot) {
+        if (flow.key.dstIP == "93.184.216.34") EXPECT_EQ(flow.hostname, "example.com");
+        else EXPECT_TRUE(flow.hostname.empty());
+    }
+}
+
+TEST(FlowAggregatorTest, NormalizesServerToClientDirection) {
+    // First packet flows server->client (src is well-known port 443).
+    // The aggregator should still key the flow client-side and credit bytes to bytesDown.
+    core::ParsedPacket downFirst = makeTcpFlowPacket(1'000, "93.184.216.34", "192.168.1.10", 443, 51000, 400);
+    core::FlowAggregator flows;
+    flows.update(downFirst);
+    const auto snapshot = flows.snapshot(2'000);
+    ASSERT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.front().key.srcIP, "192.168.1.10");
+    EXPECT_EQ(snapshot.front().key.dstIP, "93.184.216.34");
+    EXPECT_EQ(snapshot.front().bytesDown, 400u);
+    EXPECT_EQ(snapshot.front().bytesUp, 0u);
+}
+
+TEST(FlowAggregatorTest, ClearRemovesAllFlows) {
+    core::FlowAggregator flows;
+    flows.update(makeTcpFlowPacket(1'000, "192.168.1.10", "1.1.1.1", 51000, 443, 100));
+    ASSERT_EQ(flows.snapshot(2'000).size(), 1u);
+    flows.clear();
+    EXPECT_TRUE(flows.snapshot(2'000).empty());
+}
+
+namespace {
+    core::PacketData makeNumberedPacket(int64_t id, uint32_t length = 64) {
+        const uint8_t marker = static_cast<uint8_t>(id & 0xFF);
+        return core::PacketData(id, length, 1, &marker);
+    }
+}
+
+TEST(PacketQueueTest, PreservesFifoOrderingUnderCapacity) {
+    core::PacketQueue queue(8);
+    for (int64_t i = 1; i <= 5; ++i) queue.push(makeNumberedPacket(i));
+    EXPECT_EQ(queue.size(), 5u);
+    EXPECT_EQ(queue.droppedPackets(), 0u);
+
+    for (int64_t i = 1; i <= 5; ++i) {
+        auto packet = queue.try_pop();
+        ASSERT_TRUE(packet.has_value());
+        EXPECT_EQ(packet->timestamp, i);
+    }
+    EXPECT_TRUE(queue.empty());
+}
+
+TEST(PacketQueueTest, DropsOldestWhenAtCapacity) {
+    core::PacketQueue queue(3);
+    for (int64_t i = 1; i <= 6; ++i) queue.push(makeNumberedPacket(i));
+
+    EXPECT_EQ(queue.size(), 3u);
+    EXPECT_EQ(queue.droppedPackets(), 3u);
+    // FIFO eviction means packets 1, 2, 3 are gone; 4, 5, 6 remain.
+    for (int64_t expected = 4; expected <= 6; ++expected) {
+        auto packet = queue.try_pop();
+        ASSERT_TRUE(packet.has_value());
+        EXPECT_EQ(packet->timestamp, expected);
+    }
+}
+
+TEST(PacketQueueTest, ZeroMaxSizeIsTreatedAsOne) {
+    core::PacketQueue queue(0);
+    queue.push(makeNumberedPacket(1));
+    queue.push(makeNumberedPacket(2));
+    EXPECT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.droppedPackets(), 1u);
+    auto packet = queue.try_pop();
+    ASSERT_TRUE(packet.has_value());
+    EXPECT_EQ(packet->timestamp, 2);
+}
+
+TEST(PacketQueueTest, TryPopReturnsNulloptWhenEmpty) {
+    core::PacketQueue queue;
+    EXPECT_FALSE(queue.try_pop().has_value());
+}
+
+TEST(PacketQueueTest, BlockingPopWakesOnPush) {
+    core::PacketQueue queue;
+    std::atomic<bool> popped{false};
+    std::thread consumer([&] {
+        auto packet = queue.pop();
+        EXPECT_EQ(packet.timestamp, 42);
+        popped.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_FALSE(popped.load());
+    queue.push(makeNumberedPacket(42));
+    consumer.join();
+    EXPECT_TRUE(popped.load());
+}
+
+#include <mbedtls/aes.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/hkdf.h>
+#include <mbedtls/md.h>
+
+namespace {
+
+    // ---- QUIC encryption helpers (mirror of QuicParser internals) ----
+    //
+    // The parser's correctness is proved end-to-end by constructing a real
+    // QUIC v1 Initial packet (real key derivation, real AES-GCM, real header
+    // protection) and confirming the parser recovers the SNI. We use mbedTLS
+    // directly here for the encryption side.
+
+    constexpr uint8_t kInitialSaltV1Test[20] = {
+        0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3,
+        0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
+        0xcc, 0xbb, 0x7f, 0x0a
+    };
+
+    void hkdfExpandLabelTest(const uint8_t* secret, size_t secretLen,
+                             const char* label, size_t labelLen,
+                             uint8_t* out, size_t outLen) {
+        static constexpr char kPrefix[] = "tls13 ";
+        constexpr size_t kPrefixLen = sizeof(kPrefix) - 1;
+        const size_t fullLabelLen = kPrefixLen + labelLen;
+        uint8_t info[2 + 1 + 255 + 1] = {};
+        size_t p = 0;
+        info[p++] = static_cast<uint8_t>(outLen >> 8);
+        info[p++] = static_cast<uint8_t>(outLen);
+        info[p++] = static_cast<uint8_t>(fullLabelLen);
+        std::memcpy(info + p, kPrefix, kPrefixLen); p += kPrefixLen;
+        std::memcpy(info + p, label, labelLen);     p += labelLen;
+        info[p++] = 0;
+        const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+        ASSERT_EQ(mbedtls_hkdf_expand(md, secret, secretLen, info, p, out, outLen), 0);
+    }
+
+    struct QuicInitialKeys {
+        uint8_t key[16];
+        uint8_t iv[12];
+        uint8_t hp[16];
+    };
+
+    void deriveClientKeys(const uint8_t* dcid, size_t dcidLen, QuicInitialKeys& out) {
+        uint8_t initialSecret[32];
+        const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+        ASSERT_EQ(mbedtls_hkdf_extract(md, kInitialSaltV1Test, sizeof(kInitialSaltV1Test),
+                                        dcid, dcidLen, initialSecret), 0);
+        uint8_t clientSecret[32];
+        hkdfExpandLabelTest(initialSecret, 32, "client in", 9, clientSecret, 32);
+        hkdfExpandLabelTest(clientSecret, 32, "quic key", 8, out.key, 16);
+        hkdfExpandLabelTest(clientSecret, 32, "quic iv", 7, out.iv, 12);
+        hkdfExpandLabelTest(clientSecret, 32, "quic hp", 7, out.hp, 16);
+    }
+
+    void appendVarint(std::vector<uint8_t>& out, uint64_t v) {
+        if (v < 0x40) {
+            out.push_back(static_cast<uint8_t>(v));
+        } else if (v < 0x4000) {
+            out.push_back(static_cast<uint8_t>(0x40 | (v >> 8)));
+            out.push_back(static_cast<uint8_t>(v));
+        } else {
+            ASSERT_LE(v, 0x3FFFFFFFu);
+            out.push_back(static_cast<uint8_t>(0x80 | (v >> 24)));
+            out.push_back(static_cast<uint8_t>(v >> 16));
+            out.push_back(static_cast<uint8_t>(v >> 8));
+            out.push_back(static_cast<uint8_t>(v));
+        }
+    }
+
+    // Build a minimal TLS 1.3 ClientHello with one SNI extension.
+    std::vector<uint8_t> buildClientHello(const std::string& sni) {
+        std::vector<uint8_t> body;
+        body.push_back(0x03); body.push_back(0x03); // legacy_version TLS 1.2
+        for (int i = 0; i < 32; ++i) body.push_back(static_cast<uint8_t>(0xA0 + i)); // random
+        body.push_back(0x00); // empty session_id
+        // cipher_suites: TLS_AES_128_GCM_SHA256
+        body.push_back(0x00); body.push_back(0x02);
+        body.push_back(0x13); body.push_back(0x01);
+        // compression_methods: null
+        body.push_back(0x01); body.push_back(0x00);
+
+        // Extensions
+        std::vector<uint8_t> exts;
+        // server_name extension (type 0x0000)
+        std::vector<uint8_t> sniExt;
+        // server_name_list (one entry)
+        const uint16_t nameLen = static_cast<uint16_t>(sni.size());
+        const uint16_t listLen = static_cast<uint16_t>(3 + nameLen);
+        sniExt.push_back(static_cast<uint8_t>(listLen >> 8));
+        sniExt.push_back(static_cast<uint8_t>(listLen));
+        sniExt.push_back(0x00); // name_type: host_name
+        sniExt.push_back(static_cast<uint8_t>(nameLen >> 8));
+        sniExt.push_back(static_cast<uint8_t>(nameLen));
+        sniExt.insert(sniExt.end(), sni.begin(), sni.end());
+
+        exts.push_back(0x00); exts.push_back(0x00); // extension_type
+        exts.push_back(static_cast<uint8_t>(sniExt.size() >> 8));
+        exts.push_back(static_cast<uint8_t>(sniExt.size()));
+        exts.insert(exts.end(), sniExt.begin(), sniExt.end());
+
+        body.push_back(static_cast<uint8_t>(exts.size() >> 8));
+        body.push_back(static_cast<uint8_t>(exts.size()));
+        body.insert(body.end(), exts.begin(), exts.end());
+
+        std::vector<uint8_t> handshake;
+        handshake.push_back(0x01); // ClientHello
+        handshake.push_back(static_cast<uint8_t>(body.size() >> 16));
+        handshake.push_back(static_cast<uint8_t>(body.size() >> 8));
+        handshake.push_back(static_cast<uint8_t>(body.size()));
+        handshake.insert(handshake.end(), body.begin(), body.end());
+        return handshake;
+    }
+
+    // Wrap handshake bytes in a CRYPTO frame; pad out to padTo bytes.
+    std::vector<uint8_t> buildInitialPlaintext(const std::vector<uint8_t>& clientHello,
+                                                size_t padTo) {
+        std::vector<uint8_t> plain;
+        plain.push_back(0x06); // CRYPTO frame
+        appendVarint(plain, 0); // offset
+        appendVarint(plain, clientHello.size()); // length
+        plain.insert(plain.end(), clientHello.begin(), clientHello.end());
+        while (plain.size() < padTo) plain.push_back(0x00); // PADDING frames
+        return plain;
+    }
+
+    // Encrypt plaintext + apply header protection → final on-wire bytes.
+    std::vector<uint8_t> buildQuicInitialPacket(const std::vector<uint8_t>& dcid,
+                                                 const std::vector<uint8_t>& plaintext,
+                                                 uint32_t packetNumber = 0) {
+        QuicInitialKeys keys{};
+        deriveClientKeys(dcid.data(), dcid.size(), keys);
+
+        // Header: first byte (Long Header + Fixed + Initial + PN-length-1=4 -> 0xC3)
+        std::vector<uint8_t> header;
+        header.push_back(0xC3); // 11000011: long + fixed + initial + pnLen=4
+        // Version
+        header.push_back(0x00); header.push_back(0x00); header.push_back(0x00); header.push_back(0x01);
+        // DCID
+        header.push_back(static_cast<uint8_t>(dcid.size()));
+        header.insert(header.end(), dcid.begin(), dcid.end());
+        // SCID (empty)
+        header.push_back(0x00);
+        // Token (empty)
+        appendVarint(header, 0);
+        // Length placeholder — reserve exactly 2 bytes (max value for the
+        // 2-byte varint form is 0x3FFF; we patch the real length below).
+        const size_t lengthFieldOffset = header.size();
+        header.push_back(0x40);
+        header.push_back(0x00);
+        const size_t pnOffset = header.size();
+        // Packet number (4 bytes big-endian)
+        header.push_back(static_cast<uint8_t>(packetNumber >> 24));
+        header.push_back(static_cast<uint8_t>(packetNumber >> 16));
+        header.push_back(static_cast<uint8_t>(packetNumber >> 8));
+        header.push_back(static_cast<uint8_t>(packetNumber));
+
+        // Compute Length value: pn (4) + ciphertext (= plaintext size) + tag (16)
+        const uint64_t lenValue = 4 + plaintext.size() + 16;
+        EXPECT_LT(lenValue, 0x4000u);
+        header[lengthFieldOffset]     = static_cast<uint8_t>(0x40 | (lenValue >> 8));
+        header[lengthFieldOffset + 1] = static_cast<uint8_t>(lenValue);
+
+        // Build nonce: iv XOR packetNumber (right-aligned in 12 bytes)
+        uint8_t nonce[12];
+        std::memcpy(nonce, keys.iv, 12);
+        for (int i = 0; i < 4; ++i) {
+            nonce[12 - 1 - i] ^= static_cast<uint8_t>((packetNumber >> (i * 8)) & 0xFF);
+        }
+
+        // Encrypt with AES-128-GCM
+        std::vector<uint8_t> ciphertext(plaintext.size());
+        uint8_t tag[16];
+        mbedtls_gcm_context gcm;
+        mbedtls_gcm_init(&gcm);
+        EXPECT_EQ(mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, keys.key, 128), 0);
+        EXPECT_EQ(mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT,
+            plaintext.size(),
+            nonce, sizeof(nonce),
+            header.data(), header.size(),
+            plaintext.data(), ciphertext.data(),
+            16, tag), 0);
+        mbedtls_gcm_free(&gcm);
+
+        // Apply header protection
+        // Sample = 16 bytes at pnOffset + 4
+        std::vector<uint8_t> packet = header;
+        packet.insert(packet.end(), ciphertext.begin(), ciphertext.end());
+        packet.insert(packet.end(), tag, tag + 16);
+
+        const uint8_t* sample = packet.data() + pnOffset + 4;
+        uint8_t mask[16] = {};
+        mbedtls_aes_context aes;
+        mbedtls_aes_init(&aes);
+        EXPECT_EQ(mbedtls_aes_setkey_enc(&aes, keys.hp, 128), 0);
+        EXPECT_EQ(mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, sample, mask), 0);
+        mbedtls_aes_free(&aes);
+
+        // Mask first byte's low nibble + 4-byte PN
+        packet[0] ^= (mask[0] & 0x0F);
+        for (int i = 0; i < 4; ++i) packet[pnOffset + i] ^= mask[i + 1];
+
+        return packet;
+    }
+
+}
+
+// End-to-end test: build a QUIC v1 Client Initial with a known SNI using
+// our own encryption helpers, then confirm QuicParser recovers the SNI by
+// running the full pipeline (key derivation → header unprotection → AES-GCM
+// decrypt → CRYPTO frame reassembly → TLS ClientHello extension walk).
+TEST(QuicParserTest, ExtractsSniFromSyntheticClientInitial) {
+    const std::vector<uint8_t> dcid = {
+        0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08
+    };
+    const auto ch = buildClientHello("netprobe.example.com");
+    const auto plaintext = buildInitialPlaintext(ch, 1162); // RFC 9001 §A.2 size
+    const auto packet = buildQuicInitialPacket(dcid, plaintext);
+
+    const auto sni = core::QuicParser::extractInitialSni(packet.data(), packet.size());
+    ASSERT_TRUE(sni.has_value());
+    EXPECT_EQ(*sni, "netprobe.example.com");
+}
+
+TEST(QuicParserTest, ExtractsDifferentSniFromDifferentDcid) {
+    const std::vector<uint8_t> dcid = {0xde, 0xad, 0xbe, 0xef};
+    const auto ch = buildClientHello("api.acme.test");
+    const auto plaintext = buildInitialPlaintext(ch, 1162);
+    const auto packet = buildQuicInitialPacket(dcid, plaintext, 42);
+
+    const auto sni = core::QuicParser::extractInitialSni(packet.data(), packet.size());
+    ASSERT_TRUE(sni.has_value());
+    EXPECT_EQ(*sni, "api.acme.test");
+}
+
+TEST(QuicParserTest, RejectsNonQuicTraffic) {
+    const std::vector<uint8_t> garbage(64, 0x55);
+    EXPECT_FALSE(core::QuicParser::extractInitialSni(garbage.data(), garbage.size()).has_value());
+}
+
+TEST(QuicParserTest, RejectsTooShortInput) {
+    const std::vector<uint8_t> tiny = {0xc0, 0x00};
+    EXPECT_FALSE(core::QuicParser::extractInitialSni(tiny.data(), tiny.size()).has_value());
+    EXPECT_FALSE(core::QuicParser::extractInitialSni(nullptr, 0).has_value());
+}
+
+TEST(PacketQueueTest, ConcurrentProducerConsumerDeliversAllPackets) {
+    constexpr int producerCount = 4;
+    constexpr int packetsPerProducer = 500;
+    constexpr int totalPackets = producerCount * packetsPerProducer;
+
+    core::PacketQueue queue(static_cast<size_t>(totalPackets * 2));
+    std::atomic<int> consumed{0};
+    std::atomic<bool> done{false};
+
+    std::thread consumer([&] {
+        while (!done.load() || !queue.empty()) {
+            if (auto packet = queue.try_pop()) consumed.fetch_add(1);
+            else std::this_thread::yield();
+        }
+    });
+
+    std::vector<std::thread> producers;
+    producers.reserve(producerCount);
+    for (int p = 0; p < producerCount; ++p) {
+        producers.emplace_back([&, p] {
+            for (int i = 0; i < packetsPerProducer; ++i) {
+                queue.push(makeNumberedPacket(p * packetsPerProducer + i + 1));
+            }
+        });
+    }
+    for (auto& producer : producers) producer.join();
+    done.store(true);
+    consumer.join();
+
+    EXPECT_EQ(consumed.load(), totalPackets);
+    EXPECT_EQ(queue.droppedPackets(), 0u);
 }
