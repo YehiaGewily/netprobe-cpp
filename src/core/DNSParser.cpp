@@ -7,10 +7,12 @@
 namespace core {
     namespace {
         constexpr uint16_t ethernetIPv4 = 0x0800;
+        constexpr uint16_t ethernetIPv6 = 0x86DD;
         constexpr uint16_t vlanTag = 0x8100;
         constexpr uint16_t providerVlanTag = 0x88A8;
         constexpr uint16_t doubleVlanTag = 0x9100;
         constexpr uint16_t dnsPort = 53;
+        constexpr uint16_t mdnsPort = 5353;
         constexpr uint16_t dnsClassInternet = 1;
 
         uint16_t readU16(const uint8_t* bytes) {
@@ -78,19 +80,54 @@ namespace core {
             etherType = readU16(buffer + offset + 2);
             offset += 4;
         }
-        if (etherType != ethernetIPv4 || size < offset + 20) return std::nullopt;
-
-        const uint8_t versionAndHeaderLength = buffer[offset];
-        const size_t ipHeaderLength = (versionAndHeaderLength & 0x0F) * 4;
-        if ((versionAndHeaderLength >> 4) != 4 || ipHeaderLength < 20 || size < offset + ipHeaderLength) {
+        // Locate the UDP header end, regardless of IPv4 or IPv6 transport.
+        size_t ipEnd = 0;
+        if (etherType == ethernetIPv4) {
+            if (size < offset + 20) return std::nullopt;
+            const uint8_t versionAndHeaderLength = buffer[offset];
+            const size_t ipHeaderLength = (versionAndHeaderLength & 0x0F) * 4;
+            if ((versionAndHeaderLength >> 4) != 4 || ipHeaderLength < 20 || size < offset + ipHeaderLength) {
+                return std::nullopt;
+            }
+            const uint16_t ipTotalLength = readU16(buffer + offset + 2);
+            if (ipTotalLength < ipHeaderLength || buffer[offset + 9] != 17) return std::nullopt;
+            ipEnd = std::min(size, offset + static_cast<size_t>(ipTotalLength));
+            offset += ipHeaderLength;
+        } else if (etherType == ethernetIPv6) {
+            constexpr size_t v6FixedHeader = 40;
+            if (size < offset + v6FixedHeader) return std::nullopt;
+            const uint16_t payloadLen = readU16(buffer + offset + 4);
+            ipEnd = std::min(size, offset + v6FixedHeader + static_cast<size_t>(payloadLen));
+            uint8_t next = buffer[offset + 6];
+            size_t pos = offset + v6FixedHeader;
+            // Walk extension headers to find UDP.
+            while (next != 17 && pos < ipEnd) {
+                if (next == 0 || next == 43 || next == 60 || next == 135) {
+                    if (ipEnd < pos + 2) return std::nullopt;
+                    const uint8_t newNext = buffer[pos];
+                    const size_t hdrLen = (static_cast<size_t>(buffer[pos + 1]) + 1) * 8;
+                    if (ipEnd < pos + hdrLen) return std::nullopt;
+                    pos += hdrLen;
+                    next = newNext;
+                } else if (next == 44) {
+                    if (ipEnd < pos + 8) return std::nullopt;
+                    next = buffer[pos];
+                    pos += 8;
+                } else {
+                    return std::nullopt;
+                }
+            }
+            if (next != 17) return std::nullopt;
+            offset = pos;
+        } else {
             return std::nullopt;
         }
-
-        const uint16_t ipTotalLength = readU16(buffer + offset + 2);
-        if (ipTotalLength < ipHeaderLength || buffer[offset + 9] != 17) return std::nullopt;
-        const size_t ipEnd = std::min(size, offset + static_cast<size_t>(ipTotalLength));
-        offset += ipHeaderLength;
-        if (ipEnd < offset + 8 || readU16(buffer + offset) != dnsPort) return std::nullopt;
+        if (ipEnd < offset + 8) return std::nullopt;
+        const uint16_t srcPort = readU16(buffer + offset);
+        const uint16_t dstPort = readU16(buffer + offset + 2);
+        const bool isDns  = srcPort == dnsPort  || dstPort == dnsPort;
+        const bool isMdns = srcPort == mdnsPort || dstPort == mdnsPort;
+        if (!isDns && !isMdns) return std::nullopt;
 
         const uint16_t udpLength = readU16(buffer + offset + 4);
         if (udpLength < 8) return std::nullopt;
