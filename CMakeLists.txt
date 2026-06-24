@@ -241,7 +241,13 @@ if(BUILD_TESTING)
         LIBMAXMINDDB_TEST_DATA_DIR="${libmaxminddb_SOURCE_DIR}/t/maxmind-db/test-data"
     )
     include(GoogleTest)
-    gtest_discover_tests(NetProbeTests)
+    # PRE_TEST defers the exe enumeration from build-time to ctest-time. On
+    # Windows this matters because the test executable links wpcap.dll
+    # transitively (via NpcapBackend), so running it at build time would fail
+    # if the Npcap driver isn't installed — even though the build itself
+    # completed successfully. With PRE_TEST, ctest is the only consumer that
+    # actually needs the runtime DLL.
+    gtest_discover_tests(NetProbeTests DISCOVERY_MODE PRE_TEST)
 endif()
 
 # --- 8. Fuzz Harnesses (optional) ---

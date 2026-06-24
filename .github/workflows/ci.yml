@@ -39,6 +39,17 @@ jobs:
           Invoke-WebRequest https://npcap.com/dist/npcap-sdk-1.13.zip -OutFile npcap-sdk.zip
           Expand-Archive npcap-sdk.zip -DestinationPath C:\Npcap-SDK
 
+      - name: Install Npcap runtime (Windows, needed for test discovery)
+        if: runner.os == 'Windows' && matrix.build_testing == 'ON'
+        shell: pwsh
+        run: |
+          # The SDK above provides wpcap.lib for linking; the runtime DLL only
+          # ships with the driver installer. Without this step ctest can't load
+          # NetProbeTests.exe because wpcap.dll isn't on the search path.
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://npcap.com/dist/npcap-1.79.exe -OutFile $env:TEMP/npcap.exe
+          Start-Process -Wait -FilePath $env:TEMP/npcap.exe -ArgumentList "/winpcap_mode=yes", "/S"
+
       - name: Install Ubuntu dependencies
         if: runner.os == 'Linux'
         run: |
