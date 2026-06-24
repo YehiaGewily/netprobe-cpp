@@ -19,7 +19,12 @@ namespace core {
             push(PacketData(packet));
         }
 
-        // Push a packet (move semantics)
+        // Push a packet (move semantics).
+        // When full, drop the OLDEST packet (FIFO eviction) rather than the new one.
+        // Rationale: NetProbe is an analyzer, not a forensic recorder — if the UI
+        // can't keep up we'd rather show the user the most recent traffic than
+        // stall the capture thread or hold onto stale data. The dropped count is
+        // surfaced in the UI so users can see when the queue is overrun.
         void push(PacketData&& packet) {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
