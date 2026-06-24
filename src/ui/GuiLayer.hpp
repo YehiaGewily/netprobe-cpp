@@ -1,10 +1,12 @@
 #pragma once
 
+#include "core/PacketData.hpp"
 #include "core/PacketQueue.hpp"
 #include "core/ParsedPacket.hpp"
 #include "core/HostnameCache.hpp"
 #include "core/FlowAggregator.hpp"
 #include "core/GeoIPResolver.hpp"
+#include "core/ProcessResolver.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -89,7 +91,15 @@ namespace ui {
         int m_selectedDeviceIndex = 0;
 
         // UI State
-        std::deque<core::ParsedPacket> m_packetHistory;
+        // Each row of the live packet table is a PacketRecord — the raw bytes
+        // are kept alongside the parsed view so the Packet Detail panel can
+        // render a hex dump of exactly what came off the wire.
+        struct PacketRecord {
+            core::PacketData raw;
+            core::ParsedPacket parsed;
+        };
+        std::deque<PacketRecord> m_packetHistory;
+        int m_selectedPacketIndex = -1; // index into m_packetHistory, or -1 if none
         bool m_autoScroll = true;
         std::optional<core::FlowKey> m_packetFlowFilter;
         int m_flowSortColumn = 7;
@@ -100,6 +110,7 @@ namespace ui {
         core::HostnameCache m_hostnameCache;
         core::FlowAggregator m_flowAggregator;
         core::GeoIPResolver m_geoIPResolver;
+        core::ProcessResolver m_processResolver;
         ScrollingBuffer m_bandwidthData;
         double m_lastUpdateTime = 0.0;
         uint64_t m_bytesThisSec = 0;
@@ -122,6 +133,7 @@ namespace ui {
         void renderTopBar();
         void renderControlBar();
         void renderPacketTable();
+        void renderPacketDetail();
         void renderCharts();
         void renderFlowsTable();
         void renderKpiStrip();
@@ -138,6 +150,7 @@ namespace ui {
         ImFont* m_fontSmall = nullptr;
         ImFont* m_fontHeadline = nullptr;
         ImFont* m_fontBrand = nullptr;
+        ImFont* m_fontMono = nullptr; // monospace, used by the hex dump pane
 
         bool m_layoutBuilt = false;
     };
