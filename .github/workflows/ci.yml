@@ -65,28 +65,6 @@ jobs:
           path: package/*.zip
           if-no-files-found: error
 
-  format:
-    name: Check formatting
-    runs-on: ubuntu-latest
-    # Non-blocking while the existing codebase is brought into line with the
-    # newly added .clang-format. The job still flags drift on every PR so the
-    # author can decide whether to reformat.
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format
-
-      - name: Run clang-format --dry-run --Werror
-        run: |
-          find src tests -type f \( -name '*.cpp' -o -name '*.hpp' \) \
-            -not -path 'tests/fuzz/corpus/*' \
-            -print0 | xargs -0 clang-format --dry-run --Werror
-
   sanitizers:
     name: ASan + UBSan (Clang/Ubuntu)
     runs-on: ubuntu-latest

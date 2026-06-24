@@ -267,12 +267,14 @@ if(BUILD_FUZZERS)
             tests/fuzz/parser_fuzzer.cpp
             src/core/DNSParser.cpp
             src/core/ProtocolParser.cpp
+            src/core/QuicParser.cpp
         )
         target_include_directories(NetProbeParserFuzzer PRIVATE
             src
             ${PCAP_INCLUDE_DIR}
         )
         target_link_libraries(NetProbeParserFuzzer PRIVATE
+            MbedTLS::mbedcrypto
             ${NETPROBE_TEST_PLATFORM_LIBRARIES}
         )
         target_compile_options(NetProbeParserFuzzer PRIVATE
