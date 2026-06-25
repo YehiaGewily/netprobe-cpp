@@ -198,6 +198,11 @@ namespace core {
             parsed.srcPort = readU16(buffer + l4Offset);
             parsed.dstPort = readU16(buffer + l4Offset + 2);
 
+            // TCP flag byte sits at offset 13 from the start of the header.
+            const uint8_t tcpFlags = buffer[l4Offset + 13];
+            parsed.tcpSyn = (tcpFlags & 0x02) != 0;
+            parsed.tcpAck = (tcpFlags & 0x10) != 0;
+
             const size_t tcpHeaderLen = (buffer[l4Offset + 12] >> 4) * 4;
             if (tcpHeaderLen < sizeof(TCPHeader) || packetEnd < l4Offset + tcpHeaderLen) return parsed;
             const size_t payloadOffset = l4Offset + tcpHeaderLen;
