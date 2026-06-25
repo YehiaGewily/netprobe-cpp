@@ -150,6 +150,13 @@ namespace ui {
                 groupHeader("Transport");
                 kv("Source port", std::format("{}", p.srcPort));
                 kv("Dest port", std::format("{}", p.dstPort));
+                if (p.protocol == "TCP") {
+                    std::string flags;
+                    if (p.tcpSyn) flags += "SYN ";
+                    if (p.tcpAck) flags += "ACK ";
+                    if (!flags.empty()) flags.pop_back();
+                    kv("TCP flags", flags);
+                }
             }
 
             groupHeader("Application");
