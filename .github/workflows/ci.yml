@@ -11,6 +11,10 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Hard cap so a hung step (e.g. a Windows installer waiting on a UAC
+    # prompt that never arrives) fails fast instead of burning the default
+    # 6-hour budget.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -39,17 +43,6 @@ jobs:
           Invoke-WebRequest https://npcap.com/dist/npcap-sdk-1.13.zip -OutFile npcap-sdk.zip
           Expand-Archive npcap-sdk.zip -DestinationPath C:\Npcap-SDK
 
-      - name: Install Npcap runtime (Windows, needed for test discovery)
-        if: runner.os == 'Windows' && matrix.build_testing == 'ON'
-        shell: pwsh
-        run: |
-          # The SDK above provides wpcap.lib for linking; the runtime DLL only
-          # ships with the driver installer. Without this step ctest can't load
-          # NetProbeTests.exe because wpcap.dll isn't on the search path.
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri https://npcap.com/dist/npcap-1.79.exe -OutFile $env:TEMP/npcap.exe
-          Start-Process -Wait -FilePath $env:TEMP/npcap.exe -ArgumentList "/winpcap_mode=yes", "/S"
-
       - name: Install Ubuntu dependencies
         if: runner.os == 'Linux'
         run: |
@@ -61,6 +54,33 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Stage Npcap runtime DLLs (Windows)
+        if: runner.os == 'Windows' && matrix.build_testing == 'ON'
+        shell: pwsh
+        run: |
+          # The Npcap silent installer hangs on the kernel-driver step in
+          # headless CI. We only need pcap_open_offline (a user-mode call) for
+          # the test suite, so we extract just the runtime DLLs straight out of
+          # the NSIS installer with 7-Zip and drop them next to the test exe.
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://npcap.com/dist/npcap-1.79.exe -OutFile $env:TEMP\npcap.exe
+          $extractDir = "$env:TEMP\npcap-extracted"
+          & 'C:\Program Files\7-Zip\7z.exe' x $env:TEMP\npcap.exe "-o$extractDir" -y | Out-Null
+          New-Item -ItemType Directory -Path build\Release -Force | Out-Null
+          foreach ($name in 'wpcap.dll', 'Packet.dll') {
+            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter $name `
+              | Where-Object { $_.FullName -match 'x64|amd64' } `
+              | Select-Object -First 1
+            if (-not $dll) {
+              $dll = Get-ChildItem -Path $extractDir -Recurse -Filter $name | Select-Object -First 1
+            }
+            if (-not $dll) {
+              throw "Could not locate $name inside the Npcap installer."
+            }
+            Copy-Item $dll.FullName build\Release\
+            Write-Host "Staged $($dll.FullName) -> build\Release\$name"
+          }
 
       - name: Test
         if: matrix.build_testing == 'ON'
