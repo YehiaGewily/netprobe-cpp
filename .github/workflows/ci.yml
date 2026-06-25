@@ -63,23 +63,48 @@ jobs:
           # headless CI. We only need pcap_open_offline (a user-mode call) for
           # the test suite, so we extract just the runtime DLLs straight out of
           # the NSIS installer with 7-Zip and drop them next to the test exe.
+          # The installer embeds both x86 and x64 copies of each DLL; we
+          # disambiguate by reading the PE header rather than guessing from
+          # the extracted folder layout (which varies between NSIS plugins).
           $ProgressPreference = 'SilentlyContinue'
           Invoke-WebRequest -Uri https://npcap.com/dist/npcap-1.79.exe -OutFile $env:TEMP\npcap.exe
           $extractDir = "$env:TEMP\npcap-extracted"
           & 'C:\Program Files\7-Zip\7z.exe' x $env:TEMP\npcap.exe "-o$extractDir" -y | Out-Null
+
+          function Get-DllMachine {
+            param([string]$Path)
+            $stream = [System.IO.File]::OpenRead($Path)
+            try {
+              $reader = New-Object System.IO.BinaryReader($stream)
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadUInt32()
+              $stream.Position = $peOffset + 4
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+
           New-Item -ItemType Directory -Path build\Release -Force | Out-Null
           foreach ($name in 'wpcap.dll', 'Packet.dll') {
-            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter $name `
-              | Where-Object { $_.FullName -match 'x64|amd64' } `
-              | Select-Object -First 1
-            if (-not $dll) {
-              $dll = Get-ChildItem -Path $extractDir -Recurse -Filter $name | Select-Object -First 1
+            $candidates = Get-ChildItem -Path $extractDir -Recurse -Filter $name
+            if (-not $candidates) {
+              throw "No copies of $name found inside the Npcap installer."
             }
-            if (-not $dll) {
-              throw "Could not locate $name inside the Npcap installer."
+            $x64 = $null
+            foreach ($cand in $candidates) {
+              $machine = Get-DllMachine -Path $cand.FullName
+              Write-Host ("  candidate {0,-60} machine=0x{1:X4}" -f $cand.FullName, $machine)
+              if ($machine -eq 0x8664) {
+                $x64 = $cand
+                break
+              }
             }
-            Copy-Item $dll.FullName build\Release\
-            Write-Host "Staged $($dll.FullName) -> build\Release\$name"
+            if (-not $x64) {
+              throw "No 64-bit (AMD64) build of $name found in the Npcap installer."
+            }
+            Copy-Item $x64.FullName build\Release\
+            Write-Host "Staged x64 $($x64.FullName) -> build\Release\$name"
           }
 
       - name: Test
