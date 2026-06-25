@@ -153,12 +153,20 @@ set(IMPLOT_SOURCES
 )
 
 # --- 4. Executable Target ---
-add_executable(NetProbe 
+add_executable(NetProbe
     ${APP_SOURCES}
     ${IMGUI_BACKEND_SOURCES}
     ${IMGUI_CORE_SOURCES}
     ${IMPLOT_SOURCES}
 )
+
+# Embed a Windows .ico into NetProbe.exe when one is present. The build stays
+# fully optional — if resources/netprobe.ico doesn't exist the .rc file isn't
+# compiled and the binary keeps its default icon.
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/resources/netprobe.ico")
+    target_sources(NetProbe PRIVATE resources/netprobe.rc)
+    message(STATUS "Embedding resources/netprobe.ico into NetProbe.exe")
+endif()
 
 # --- 5. Include Directories ---
 target_include_directories(NetProbe PRIVATE
