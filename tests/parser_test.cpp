@@ -76,6 +76,74 @@ namespace {
     };
 }
 
+namespace {
+    // Write a minimal valid PCAPNG file containing one Ethernet packet.
+    // Block layout (all little-endian): Section Header Block (SHB),
+    // Interface Description Block (IDB, link type 1 = Ethernet),
+    // Enhanced Packet Block (EPB) with the supplied payload.
+    void writePcapng(const std::filesystem::path& path, const std::vector<uint8_t>& packet) {
+        std::vector<uint8_t> bytes;
+
+        // --- Section Header Block ---
+        appendU32LE(bytes, 0x0A0D0D0A); // block type: SHB
+        appendU32LE(bytes, 28);         // total block length
+        appendU32LE(bytes, 0x1A2B3C4D); // byte-order magic (little-endian)
+        bytes.insert(bytes.end(), {0x01, 0x00, 0x00, 0x00}); // version 1.0
+        // section length = -1 (unknown), 8 bytes
+        bytes.insert(bytes.end(), 8, 0xFF);
+        appendU32LE(bytes, 28);         // block length (trailer)
+
+        // --- Interface Description Block ---
+        appendU32LE(bytes, 0x00000001); // block type: IDB
+        appendU32LE(bytes, 20);         // total block length
+        appendU32LE(bytes, 1);          // link type: LINKTYPE_ETHERNET
+        appendU32LE(bytes, 65535);      // snap length
+        appendU32LE(bytes, 20);         // block length (trailer)
+
+        // --- Enhanced Packet Block ---
+        const uint32_t capturedLen = static_cast<uint32_t>(packet.size());
+        // EPB payload padding to 4-byte alignment.
+        const uint32_t padding = (4 - (capturedLen % 4)) % 4;
+        const uint32_t totalBlockLen = 32 + capturedLen + padding;
+        appendU32LE(bytes, 0x00000006); // block type: EPB
+        appendU32LE(bytes, totalBlockLen);
+        appendU32LE(bytes, 0);          // interface id
+        appendU32LE(bytes, 0);          // timestamp high
+        appendU32LE(bytes, 0);          // timestamp low (irrelevant for parsing)
+        appendU32LE(bytes, capturedLen); // captured length
+        appendU32LE(bytes, capturedLen); // original length
+        bytes.insert(bytes.end(), packet.begin(), packet.end());
+        for (uint32_t i = 0; i < padding; ++i) bytes.push_back(0);
+        appendU32LE(bytes, totalBlockLen); // block length (trailer)
+
+        std::ofstream out(path, std::ios::binary);
+        ASSERT_TRUE(out);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+}
+
+// libpcap / Npcap natively read pcapng via pcap_open_offline. This test
+// constructs a minimal pcapng on disk and confirms NetProbe's offline loader
+// pulls the inner packet through end-to-end.
+TEST_F(OfflinePcapTest, LoadsPcapngFixture) {
+    std::vector<uint8_t> packet;
+    appendEthernetHeader(packet, 0x0800);
+    appendIPv4Header(packet, 28, 17, {10, 0, 0, 5}, {8, 8, 8, 8});
+    appendU16(packet, 53000);
+    appendU16(packet, 53);
+    packet.insert(packet.end(), {0x00, 0x08, 0x00, 0x00});
+
+    const auto fixture = fixtureDirectory / "minimal.pcapng";
+    writePcapng(fixture, packet);
+    const auto packets = loadFixture(fixture);
+
+    ASSERT_EQ(packets.size(), 1u);
+    EXPECT_EQ(packets[0].protocol, "UDP");
+    EXPECT_EQ(packets[0].srcIP, "10.0.0.5");
+    EXPECT_EQ(packets[0].dstIP, "8.8.8.8");
+    EXPECT_EQ(packets[0].dstPort, 53);
+}
+
 TEST_F(OfflinePcapTest, LoadsHttpsClientHelloFixture) {
     const auto tls = makeTlsClientHello("example.com");
     std::vector<uint8_t> packet;
@@ -383,6 +451,66 @@ TEST(FlowAggregatorTest, NormalizesServerToClientDirection) {
     EXPECT_EQ(snapshot.front().key.dstIP, "93.184.216.34");
     EXPECT_EQ(snapshot.front().bytesDown, 400u);
     EXPECT_EQ(snapshot.front().bytesUp, 0u);
+}
+
+TEST(FlowAggregatorTest, ComputesInitialRttFromSynAndSynAck) {
+    // Client → server SYN at t=0, server → client SYN-ACK at t=42ms.
+    // We expect the aggregator to credit the flow with a 42_000 µs initial RTT.
+    constexpr int64_t synTime    = 1'000'000;
+    constexpr int64_t synAckTime = synTime + 42'000;
+
+    core::ParsedPacket syn = makeTcpFlowPacket(synTime, "192.168.1.10", "93.184.216.34", 50000, 443, 60);
+    syn.tcpSyn = true;
+    syn.tcpAck = false;
+
+    core::ParsedPacket synAck = makeTcpFlowPacket(synAckTime, "93.184.216.34", "192.168.1.10", 443, 50000, 60);
+    synAck.tcpSyn = true;
+    synAck.tcpAck = true;
+
+    core::FlowAggregator flows;
+    flows.update(syn);
+    flows.update(synAck);
+    const auto snapshot = flows.snapshot(synAckTime + 100'000);
+    ASSERT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.front().initialRttMicroseconds, 42'000);
+}
+
+TEST(FlowAggregatorTest, IgnoresSynRetransmitForRttCalculation) {
+    // A retransmitted SYN should not push the RTT measurement out — once we
+    // have the first SYN timestamp, that's the value we use.
+    constexpr int64_t firstSyn  = 1'000'000;
+    constexpr int64_t secondSyn = firstSyn + 1'000'000; // 1s later
+    constexpr int64_t synAck    = firstSyn + 30'000;   // SYN-ACK arrives before retransmit
+
+    core::ParsedPacket syn1 = makeTcpFlowPacket(firstSyn, "192.168.1.10", "8.8.8.8", 51000, 443, 60);
+    syn1.tcpSyn = true;
+
+    core::ParsedPacket syn2 = makeTcpFlowPacket(secondSyn, "192.168.1.10", "8.8.8.8", 51000, 443, 60);
+    syn2.tcpSyn = true;
+
+    core::ParsedPacket sa = makeTcpFlowPacket(synAck, "8.8.8.8", "192.168.1.10", 443, 51000, 60);
+    sa.tcpSyn = true;
+    sa.tcpAck = true;
+
+    core::FlowAggregator flows;
+    flows.update(syn1);
+    flows.update(sa);
+    flows.update(syn2); // retransmit after handshake completed
+    const auto snapshot = flows.snapshot(secondSyn + 500'000);
+    ASSERT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.front().initialRttMicroseconds, 30'000);
+}
+
+TEST(FlowAggregatorTest, NoRttWhenFlowStartedBeforeCapture) {
+    // No SYN seen — flow starts with mid-stream data — RTT remains unset.
+    core::ParsedPacket data = makeTcpFlowPacket(1'000'000, "192.168.1.10", "8.8.8.8", 51000, 443, 1400);
+    data.tcpAck = true; // ACK only, no SYN
+
+    core::FlowAggregator flows;
+    flows.update(data);
+    const auto snapshot = flows.snapshot(2'000'000);
+    ASSERT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.front().initialRttMicroseconds, 0);
 }
 
 TEST(FlowAggregatorTest, ClearRemovesAllFlows) {
