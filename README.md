@@ -10,10 +10,10 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 
 ## Features
 
-- **Live and offline capture**: inspect an active adapter or drag a `.pcap` into the app.
+- **Live and offline capture**: inspect an active adapter or drag a `.pcap` / `.pcapng` into the app (classic libpcap and modern PCAPNG both supported).
 - **Protocol insight**: Ethernet, VLAN, IPv4/IPv6, TCP, UDP, ARP, ICMP/ICMPv6, DNS A/AAAA/CNAME, TLS SNI, and **QUIC ClientHello SNI** (decrypts QUIC v1 Initial packets to recover the hostname behind UDP/443).
 - **Packet detail pane**: click any packet to see a structured Frame → Network → Transport → Application decode plus an `xxd`-style hex dump of the raw bytes.
-- **Flows view**: sortable per-connection byte totals, one-second rate, duration, service, hostname, Country, and ASN/organization.
+- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, service, hostname, Country, and ASN/organization.
 - **Process resolution**: the *App* column shows the owning process on Windows (iphlpapi), Linux (`/proc/net/*` + `/proc/<pid>/fd/`), and macOS (`proc_pidfdinfo`).
 - **Filtering and export**: apply live BPF filters such as `tcp port 443`, then save the retained session as a Wireshark-compatible PCAP.
 - **Cross-platform backends**: Npcap on Windows and libpcap on Linux/macOS.
@@ -112,10 +112,17 @@ NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive 
   - `ProtocolParser` — Ethernet → IPv4/IPv6 (with extension headers) → TCP/UDP → service classification.
   - `DNSParser` — A/AAAA/CNAME extraction, feeds `HostnameCache`.
   - `QuicParser` — QUIC v1 Initial decryption (mbedTLS): HKDF-SHA256 from DCID → AES-128-ECB for header protection → AES-128-GCM for the payload → CRYPTO-frame reassembly → TLS ClientHello SNI.
-  - `FlowAggregator` — collapses bidirectional flows by canonical key, tracks bytes/rate/duration.
+  - `FlowAggregator` — collapses bidirectional flows by canonical key, tracks bytes/rate/duration, and measures the **initial TCP RTT** from the SYN / SYN-ACK timing delta.
   - `GeoIPResolver` — LRU-cached lookups against GeoLite2 MMDBs.
   - `ProcessResolver` — endpoint → PID → executable name. Per-OS branches: Windows iphlpapi, Linux `/proc`, macOS `proc_pidfdinfo`.
 - **GUI layer (`src/ui/`)**: Dear ImGui dockspace split across `GuiLayer` (chrome + dockspace), `Dashboard`, `FlowsView`, `PacketView`, and `PacketDetail`. Consumes the queue each frame and updates derived metrics.
+
+## Quality
+
+- **27 unit and integration tests** (GoogleTest) covering protocol parsing, flow aggregation, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures.
+- **libFuzzer harness** on `ProtocolParser::parse` and `DNSParser::parseResponse`, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
+- **AddressSanitizer + UndefinedBehaviorSanitizer** CI job runs the full test suite under ASan/UBSan on every push.
+- **Three-platform CI matrix** (Windows / Ubuntu / macOS) builds the app, builds and runs the test suite, and packages release ZIPs via CPack on tag pushes. Windows test runs use a 7-Zip-extracted Npcap user-mode DLL so the kernel-driver install is unnecessary in CI.
 
 ## Contributing
 
