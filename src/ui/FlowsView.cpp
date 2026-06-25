@@ -32,16 +32,17 @@ namespace ui {
             | ImGuiTableFlags_Resizable
             | ImGuiTableFlags_Sortable;
 
-        if (ImGui::BeginTable("FlowsTable", 9, tableFlags)) {
+        if (ImGui::BeginTable("FlowsTable", 10, tableFlags)) {
             ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, 65.0f);
             ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, 180.0f);
             ImGui::TableSetupColumn("Service", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Protocol:Port", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Packets", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+            ImGui::TableSetupColumn("Proto", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn("Pkts", ImGuiTableColumnFlags_WidthFixed, 65.0f);
             ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, 90.0f);
             ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, 90.0f);
-            ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 85.0f);
+            ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, 70.0f);
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs(); sortSpecs && sortSpecs->SpecsDirty) {
@@ -80,7 +81,15 @@ namespace ui {
                 case 6: comparison = leftBytes < rightBytes ? -1 : leftBytes > rightBytes ? 1 : 0; break;
                 case 7: comparison = left.rateBytesPerSecond < right.rateBytesPerSecond ? -1
                     : left.rateBytesPerSecond > right.rateBytesPerSecond ? 1 : 0; break;
-                case 8: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
+                case 8: {
+                    // Unknown RTT (0) sorts to the bottom regardless of direction
+                    // so flows with measurements always cluster at the top.
+                    const int64_t lr = left.initialRttMicroseconds == 0 ? INT64_MAX : left.initialRttMicroseconds;
+                    const int64_t rr = right.initialRttMicroseconds == 0 ? INT64_MAX : right.initialRttMicroseconds;
+                    comparison = lr < rr ? -1 : lr > rr ? 1 : 0;
+                    break;
+                }
+                case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
                     : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
                 default: break;
                 }
@@ -153,6 +162,16 @@ namespace ui {
                     const std::string rate = std::format("{}/s", formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond)));
                     ImGui::TextUnformatted(rate.c_str());
                     ImGui::TableSetColumnIndex(8);
+                    if (flow.initialRttMicroseconds > 0) {
+                        const double ms = static_cast<double>(flow.initialRttMicroseconds) / 1000.0;
+                        // Color the RTT cell by latency: green <50ms, amber <200ms, red beyond.
+                        const ImVec4& rttColor = ms < 50.0 ? kSuccess
+                                              : ms < 200.0 ? kWarning : kDanger;
+                        ImGui::TextColored(rttColor, "%.1f ms", ms);
+                    } else {
+                        ImGui::TextDisabled("--");
+                    }
+                    ImGui::TableSetColumnIndex(9);
                     const std::string duration = formatDuration(flow.firstSeen, flow.lastSeen);
                     ImGui::TextUnformatted(duration.c_str());
                     ImGui::PopID();
