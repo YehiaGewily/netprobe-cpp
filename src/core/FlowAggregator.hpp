@@ -30,6 +30,11 @@ namespace core {
         std::string hostname;
         std::string service;
         double rateBytesPerSecond = 0.0;
+        // Initial TCP RTT, in microseconds. Computed once when both the
+        // outgoing SYN and the matching SYN-ACK have been observed; 0 means
+        // the flow either isn't TCP, started before the capture, or hasn't
+        // reached SYN-ACK yet.
+        int64_t initialRttMicroseconds = 0;
     };
 
     class FlowAggregator {
@@ -56,6 +61,11 @@ namespace core {
         struct FlowState {
             Flow flow;
             std::deque<TrafficSample> recentTraffic;
+            // Timestamps used to compute the initial three-way-handshake RTT.
+            // synTimestamp is the first client→server SYN we saw; syn-ack
+            // arrival in the other direction yields the RTT delta.
+            int64_t synTimestamp = 0;
+            bool synSeen = false;
         };
 
         std::unordered_map<FlowKey, FlowState, FlowKeyHash> m_flows;

@@ -66,10 +66,24 @@ namespace core {
 
         state.flow.lastSeen = packet.timestamp;
         ++state.flow.packets;
-        if (isServerToClient(packet)) {
+        const bool downstream = isServerToClient(packet);
+        if (downstream) {
             state.flow.bytesDown += packet.length;
         } else {
             state.flow.bytesUp += packet.length;
+        }
+
+        // Initial-RTT tracking: outgoing SYN (no ACK) starts the timer,
+        // matching SYN-ACK from the server stops it. Only record once per
+        // flow so a SYN retransmit doesn't move the goalposts.
+        if (packet.protocol == "TCP" && state.flow.initialRttMicroseconds == 0) {
+            if (packet.tcpSyn && !packet.tcpAck && !downstream && !state.synSeen) {
+                state.synTimestamp = packet.timestamp;
+                state.synSeen = true;
+            } else if (packet.tcpSyn && packet.tcpAck && downstream && state.synSeen) {
+                const int64_t delta = packet.timestamp - state.synTimestamp;
+                if (delta > 0) state.flow.initialRttMicroseconds = delta;
+            }
         }
 
         if (!hostname.empty()) state.flow.hostname = hostname;
