@@ -62,6 +62,7 @@ _CPack_Packages/
 
 # --- Runtime / Application Output ---
 imgui.ini
+netprobe-layout.ini
 
 # --- GeoIP Data and Local Secrets ---
 # GeoLite databases are user-supplied/downloaded and must not be committed.
