@@ -106,11 +106,11 @@ For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb`
 
 NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive while handling high-throughput traffic.
 
-- **Capture backend (`src/capture/`)**: an `ICaptureBackend` interface with Npcap (Windows) and libpcap (Linux/macOS) implementations. Runs on a dedicated `std::jthread` and pushes `PacketData` into the queue.
+- **Capture backend (`src/capture/`)**: an `ICaptureBackend` interface with Npcap (Windows) and libpcap (Linux/macOS) implementations. Runs on a dedicated `std::thread` and pushes `PacketData` into the queue.
 - **PacketQueue (`src/core/PacketQueue.hpp`)**: thread-safe bounded queue (`std::mutex` + `std::condition_variable`). Drop-oldest on overflow so the UI shows fresh traffic; dropped-packet count is surfaced separately.
 - **Protocol stack (`src/core/`)**:
   - `ProtocolParser` — Ethernet → IPv4/IPv6 (with extension headers) → TCP/UDP → service classification.
-  - `DNSParser` — A/AAAA/CNAME extraction, feeds `HostnameCache`.
+  - `DNSParser` — DNS and multicast DNS (mDNS) A/AAAA/CNAME extraction over IPv4/IPv6, feeds `HostnameCache`.
   - `QuicParser` — QUIC v1 Initial decryption (mbedTLS): HKDF-SHA256 from DCID → AES-128-ECB for header protection → AES-128-GCM for the payload → CRYPTO-frame reassembly → TLS ClientHello SNI.
   - `FlowAggregator` — collapses bidirectional flows by canonical key, tracks bytes/rate/duration, and measures the **initial TCP RTT** from the SYN / SYN-ACK timing delta.
   - `GeoIPResolver` — LRU-cached lookups against GeoLite2 MMDBs.
