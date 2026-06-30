@@ -22,16 +22,6 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 | --- | --- | --- |
 | Protocol, hostname, and per-packet hex | Rate, service, GeoIP, and ASN | No administrator rights required |
 
-## Demo and screenshots
-
-![NetProbe live capture](docs/images/demo.gif)
-
-| Live packets | Flows view | Offline PCAP mode |
-| --- | --- | --- |
-| ![](docs/images/packets.png) | ![](docs/images/flows.png) | ![](docs/images/offline.png) |
-
-Release media is recorded from a real capture session so it stays faithful to the current UI. The capture script and required filenames are documented in [docs/record-demo.md](docs/record-demo.md).
-
 ## Tech Stack
 
 - **Language**: C++20
