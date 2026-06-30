@@ -1,5 +1,6 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
+#include "ui/EmbeddedIcon.hpp"
 #include "core/DNSParser.hpp"
 #include "core/ProtocolParser.hpp"
 #include "imgui.h"
@@ -43,6 +44,18 @@ namespace ui {
             glfwTerminate();
             return false;
         }
+
+        // Title-bar and taskbar icon — the embedded .ico covers Explorer /
+        // shortcuts, but GLFW windows need an explicit set call to override
+        // the default OS window icon while the app is running.
+        GLFWimage icons[3];
+        icons[0] = {kEmbeddedIcon16Size, kEmbeddedIcon16Size,
+            const_cast<unsigned char*>(kEmbeddedIcon16Pixels)};
+        icons[1] = {kEmbeddedIcon32Size, kEmbeddedIcon32Size,
+            const_cast<unsigned char*>(kEmbeddedIcon32Pixels)};
+        icons[2] = {kEmbeddedIcon48Size, kEmbeddedIcon48Size,
+            const_cast<unsigned char*>(kEmbeddedIcon48Pixels)};
+        glfwSetWindowIcon(m_window, 3, icons);
 
         glfwMakeContextCurrent(m_window);
         glfwSwapInterval(1); // Enable vsync
