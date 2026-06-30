@@ -200,6 +200,15 @@ jobs:
       contents: write
 
     steps:
+      # gh release create --generate-notes invokes `git log` under the hood
+      # to compute the changelog between this tag and the previous one. That
+      # requires a real repo on disk (not just the workflow context), with
+      # full history so tags are visible. fetch-depth: 0 disables shallow
+      # clone so all tags come down.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
