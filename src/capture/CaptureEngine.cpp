@@ -38,6 +38,7 @@ namespace capture {
             m_backend->close();
             return;
         }
+        m_sessionLinkType.store(m_backend->linkType(), std::memory_order_release);
 
         m_stopRequested.store(false, std::memory_order_release);
         m_captureThread = std::thread([this] { captureLoop(); });
@@ -53,6 +54,12 @@ namespace capture {
         if (!m_backend->openFile(path, error)) {
             std::cerr << "Unable to open capture file '" << path << "': " << error << std::endl;
             return false;
+        }
+        m_sessionLinkType.store(m_backend->linkType(), std::memory_order_release);
+        if (m_backend->linkType() == core::LinkType::Unsupported) {
+            std::cerr << "Capture file '" << path
+                      << "' uses an unsupported link-layer type; packets cannot be decoded."
+                      << std::endl;
         }
 
         bool succeeded = true;
@@ -93,7 +100,11 @@ namespace capture {
             packets.assign(m_sessionPackets.begin(), m_sessionPackets.end());
         }
 
-        pcap_t* deadHandle = pcap_open_dead(DLT_EN10MB, 65536);
+        // Write the DLT the packets were actually captured with — writing
+        // Ethernet for a loopback or cooked capture would produce a PCAP that
+        // Wireshark decodes as garbage.
+        pcap_t* deadHandle = pcap_open_dead(
+            core::dltFromLinkType(m_sessionLinkType.load(std::memory_order_acquire)), 65536);
         if (!deadHandle) {
             error = "Unable to create a PCAP writer.";
             return false;
@@ -119,6 +130,10 @@ namespace capture {
         pcap_dump_close(dumper);
         pcap_close(deadHandle);
         return true;
+    }
+
+    core::LinkType CaptureEngine::linkType() const {
+        return m_sessionLinkType.load(std::memory_order_acquire);
     }
 
     void CaptureEngine::stopCapture() {

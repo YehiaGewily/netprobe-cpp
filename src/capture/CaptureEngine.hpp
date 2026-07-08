@@ -1,6 +1,7 @@
 #pragma once
 
 #include "capture/ICaptureBackend.hpp"
+#include "core/LinkType.hpp"
 
 #include <atomic>
 #include <deque>
@@ -28,6 +29,9 @@ namespace capture {
         bool exportSession(const std::string& path, std::string& error) const;
         void stopCapture();
 
+        // Link-layer encapsulation of the packets currently in the session.
+        core::LinkType linkType() const;
+
     private:
         core::PacketQueue& m_queue;
         std::unique_ptr<ICaptureBackend> m_backend;
@@ -37,6 +41,9 @@ namespace capture {
         std::string m_activeFilter;
         std::deque<core::PacketData> m_sessionPackets;
         mutable std::mutex m_sessionMutex;
+        // Snapshotted at open() so exportSession() can write the correct DLT
+        // even after the handle has been closed.
+        std::atomic<core::LinkType> m_sessionLinkType{core::LinkType::Ethernet};
 
         static constexpr size_t maxSessionPackets = 10'000;
 
