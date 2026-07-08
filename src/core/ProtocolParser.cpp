@@ -9,8 +9,6 @@
 #include <string_view>
 
 namespace core {
-    bool ProtocolParser::looksLikeTlsHandshake(const uint8_t* payload, size_t length) { return false; }
-    bool ProtocolParser::parseTlsClientHello(const uint8_t* payload, size_t length, std::string& outSni) { return false; }
     namespace {
         constexpr uint16_t kEthIPv4    = 0x0800;
         constexpr uint16_t kEthARP     = 0x0806;
@@ -525,75 +523,91 @@ namespace core {
 
     } // namespace
 
-    void ProtocolParser::parseTLS(const uint8_t* payload, size_t len, ParsedPacket& outPacket) {
+    bool ProtocolParser::looksLikeTlsHandshake(const uint8_t* payload, size_t length) {
+        return length >= 5 && payload[0] == 0x16 && payload[1] == 0x03 && payload[2] <= 0x04;
+    }
+
+    bool ProtocolParser::parseTlsClientHello(const uint8_t* payload, size_t len, std::string& outSni) {
         constexpr size_t recordHeaderLength = 5;
         constexpr size_t handshakeHeaderLength = 4;
         constexpr size_t clientHelloFixedLength = 34;
 
-        if (len < recordHeaderLength || payload[0] != 0x16) return;
+        if (!looksLikeTlsHandshake(payload, len)) return false;
 
-        const size_t recordEnd = std::min(len, recordHeaderLength + static_cast<size_t>(readU16(payload + 3)));
+        const size_t recordLength = readU16(payload + 3);
+        if (recordHeaderLength + recordLength > len) return false;
+        const size_t recordEnd = recordHeaderLength + recordLength;
+
         size_t pos = recordHeaderLength;
-        if (recordEnd < pos + handshakeHeaderLength || payload[pos] != 0x01) return;
+        if (recordEnd < pos + handshakeHeaderLength || payload[pos] != 0x01) return false;
 
         const size_t handshakeLength = (static_cast<size_t>(payload[pos + 1]) << 16)
             | (static_cast<size_t>(payload[pos + 2]) << 8) | payload[pos + 3];
         pos += handshakeHeaderLength;
-        const size_t handshakeEnd = std::min(recordEnd, pos + handshakeLength);
-        if (handshakeEnd < pos + clientHelloFixedLength) return;
+        if (pos + handshakeLength > recordEnd) return false;
+        const size_t handshakeEnd = pos + handshakeLength;
+        if (handshakeEnd < pos + clientHelloFixedLength) return false;
         pos += clientHelloFixedLength;
 
-        if (pos >= handshakeEnd) return;
+        if (pos >= handshakeEnd) return false;
         const size_t sessionIdLength = payload[pos++];
-        if (sessionIdLength > handshakeEnd - pos) return;
+        if (sessionIdLength > handshakeEnd - pos) return false;
         pos += sessionIdLength;
 
-        if (handshakeEnd - pos < 2) return;
+        if (handshakeEnd - pos < 2) return false;
         const size_t cipherSuitesLength = readU16(payload + pos);
         pos += 2;
-        if (cipherSuitesLength > handshakeEnd - pos) return;
+        if (cipherSuitesLength > handshakeEnd - pos) return false;
         pos += cipherSuitesLength;
 
-        if (pos >= handshakeEnd) return;
+        if (pos >= handshakeEnd) return false;
         const size_t compressionMethodsLength = payload[pos++];
-        if (compressionMethodsLength > handshakeEnd - pos) return;
+        if (compressionMethodsLength > handshakeEnd - pos) return false;
         pos += compressionMethodsLength;
 
-        if (handshakeEnd - pos < 2) return;
+        if (handshakeEnd - pos < 2) return false;
         const size_t extensionsLength = readU16(payload + pos);
         pos += 2;
-        if (extensionsLength > handshakeEnd - pos) return;
+        if (extensionsLength > handshakeEnd - pos) return false;
         const size_t extensionsEnd = pos + extensionsLength;
 
         while (extensionsEnd - pos >= 4) {
             const uint16_t extensionType = readU16(payload + pos);
             const size_t extensionLength = readU16(payload + pos + 2);
             pos += 4;
-            if (extensionLength > extensionsEnd - pos) return;
+            if (extensionLength > extensionsEnd - pos) return false;
             const size_t extensionEnd = pos + extensionLength;
 
             if (extensionType == 0x0000) {
-                if (extensionEnd - pos < 2) return;
+                if (extensionEnd - pos < 2) return false;
                 const size_t nameListLength = readU16(payload + pos);
                 pos += 2;
-                if (nameListLength > extensionEnd - pos) return;
+                if (nameListLength > extensionEnd - pos) return false;
                 const size_t nameListEnd = pos + nameListLength;
 
                 while (nameListEnd - pos >= 3) {
                     const uint8_t nameType = payload[pos++];
                     const size_t nameLength = readU16(payload + pos);
                     pos += 2;
-                    if (nameLength > nameListEnd - pos) return;
+                    if (nameLength > nameListEnd - pos) return false;
                     if (nameType == 0x00) {
-                        outPacket.sni = std::string(reinterpret_cast<const char*>(payload + pos), nameLength);
-                        outPacket.service = identifyService(outPacket.sni);
-                        return;
+                        outSni.assign(reinterpret_cast<const char*>(payload + pos), nameLength);
+                        return true;
                     }
                     pos += nameLength;
                 }
-                return;
+                return false;
             }
             pos = extensionEnd;
+        }
+        return false;
+    }
+
+    void ProtocolParser::parseTLS(const uint8_t* payload, size_t len, ParsedPacket& outPacket) {
+        std::string sni;
+        if (parseTlsClientHello(payload, len, sni) && !sni.empty()) {
+            outPacket.sni = sni;
+            outPacket.service = identifyService(sni);
         }
     }
 
@@ -781,7 +795,7 @@ namespace core {
             const size_t payloadLen = std::min(parsed.payloadLength, size - parsed.payloadOffset);
 
             if (parsed.protocol == "TCP") {
-                if (payloadLen >= 5 && payload[0] == 0x16 && payload[1] == 0x03 && payload[2] <= 0x04) {
+                if (looksLikeTlsHandshake(payload, payloadLen)) {
                     parseTLS(payload, payloadLen, parsed);
                 } else {
                     parseHTTP(payload, payloadLen, parsed);
