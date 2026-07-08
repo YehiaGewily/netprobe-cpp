@@ -11,11 +11,21 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 ## Features
 
 - **Live and offline capture**: inspect an active adapter or drag a `.pcap` / `.pcapng` into the app (classic libpcap and modern PCAPNG both supported).
-- **Protocol insight**: Ethernet, VLAN, IPv4/IPv6, TCP, UDP, ARP, ICMP/ICMPv6, DNS A/AAAA/CNAME, TLS SNI, and **QUIC ClientHello SNI** (decrypts QUIC v1 Initial packets to recover the hostname behind UDP/443).
-- **Packet detail pane**: click any packet to see a structured Frame → Network → Transport → Application decode plus an `xxd`-style hex dump of the raw bytes.
-- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, service, hostname, Country, and ASN/organization.
+- **Link-layer aware**: decodes Ethernet, VLAN/QinQ, Linux cooked captures (`SLL`/`SLL2`, as produced by the `any` device), BSD/OpenBSD loopback, and raw-IP captures. Exported PCAPs preserve the original link type.
+- **Protocol insight**: IPv4/IPv6, TCP, UDP, ARP, ICMP/ICMPv6, SCTP, and named non-IP frames (LLDP, EAPOL, PPPoE, MPLS).
+- **Tunnel descent**: transparently decodes **GRE, IP-in-IP, 6in4, VXLAN, GENEVE, MPLS, and PPPoE**, so flows are keyed on the real inner endpoints rather than the tunnel. Encrypted tunnels (ESP/IPsec, WireGuard, OpenVPN) are labelled as such instead of being silently misreported.
+- **Deep application identification**:
+  - **TLS SNI on any port** (content-sniffed, not port-gated), with **reassembly of ClientHellos split across TCP segments** — required now that post-quantum key shares push the message past one MSS.
+  - **QUIC ClientHello SNI** for **v1 (RFC 9000) and v2 (RFC 9369)** on any UDP port, decrypting Initial packets and **reassembling CRYPTO frames across multiple Initials**.
+  - **Cleartext HTTP**: request line and `Host:` header, which names hosts even when no DNS was observed.
+  - **DNS/mDNS**: A/AAAA/CNAME, plus **PTR** (names LAN devices that never appear in a forward lookup), SRV, TXT, and **HTTPS/SVCB** records.
+- **Encrypted-DNS visibility**: detects DoH/DoT/DoQ and **Encrypted Client Hello**, and tells you when name resolution has moved off the wire rather than silently showing bare IPs.
+- **Packet detail pane**: click any packet to see a structured Frame → Tunnel → Network → Transport → Application decode plus an `xxd`-style hex dump of the raw bytes.
+- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, service, hostname, Country, and ASN/organization, with a detail pane and live rate sparkline. Flow keys are canonical, so both directions of a peer-to-peer conversation collapse into a single row.
+- **Statistics view**: protocol hierarchy, top talkers by bytes, and name-resolution health.
 - **Process resolution**: the *App* column shows the owning process on Windows (iphlpapi), Linux (`/proc/net/*` + `/proc/<pid>/fd/`), and macOS (`proc_pidfdinfo`).
-- **Filtering and export**: apply live BPF filters such as `tcp port 443`, then save the retained session as a Wireshark-compatible PCAP.
+- **Filtering and export**: live BPF capture filters such as `tcp port 443`, a separate display filter over captured packets, PCAP export, and flow export to CSV.
+- **Light and dark themes**, adjustable UI scale, and keyboard shortcuts — all persisted between runs.
 - **Cross-platform backends**: Npcap on Windows and libpcap on Linux/macOS.
 
 | Live packet analysis | Connection flows | Offline PCAP mode |
@@ -99,18 +109,21 @@ NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive 
 - **Capture backend (`src/capture/`)**: an `ICaptureBackend` interface with Npcap (Windows) and libpcap (Linux/macOS) implementations. Runs on a dedicated `std::thread` and pushes `PacketData` into the queue.
 - **PacketQueue (`src/core/PacketQueue.hpp`)**: thread-safe bounded queue (`std::mutex` + `std::condition_variable`). Drop-oldest on overflow so the UI shows fresh traffic; dropped-packet count is surfaced separately.
 - **Protocol stack (`src/core/`)**:
-  - `ProtocolParser` — Ethernet → IPv4/IPv6 (with extension headers) → TCP/UDP → service classification.
-  - `DNSParser` — DNS and multicast DNS (mDNS) A/AAAA/CNAME extraction over IPv4/IPv6, feeds `HostnameCache`.
-  - `QuicParser` — QUIC v1 Initial decryption (mbedTLS): HKDF-SHA256 from DCID → AES-128-ECB for header protection → AES-128-GCM for the payload → CRYPTO-frame reassembly → TLS ClientHello SNI.
-  - `FlowAggregator` — collapses bidirectional flows by canonical key, tracks bytes/rate/duration, and measures the **initial TCP RTT** from the SYN / SYN-ACK timing delta.
+  - `LinkType` — maps libpcap `DLT_*` values to the encapsulations the parser understands, so a cooked or loopback capture is decoded correctly (or refused) rather than misread as Ethernet.
+  - `ProtocolParser` — link layer → IPv4/IPv6 (with extension headers) → tunnel descent (depth-capped) → TCP/UDP → application DPI (TLS, QUIC, HTTP) and service classification. Stateless.
+  - `TlsReassembler` — buffers ClientHello bytes across in-order TCP segments, with size caps and stream expiry. Stateful; owned by the UI layer.
+  - `QuicParser` — QUIC v1/v2 Initial decryption (mbedTLS): HKDF-SHA256 from DCID → AES-128-ECB for header protection → AES-128-GCM for the payload → CRYPTO-frame extraction → TLS ClientHello SNI.
+  - `QuicTracker` — stitches CRYPTO fragments from multiple Initial packets, keyed by connection id, for ClientHellos too large for one datagram.
+  - `DNSParser` — DNS/mDNS/LLMNR A/AAAA/CNAME/PTR/SRV/TXT/HTTPS-SVCB extraction over IPv4/IPv6 and any link type, feeds `HostnameCache`; flags advertised ECH configs.
+  - `FlowAggregator` — collapses bidirectional flows by a canonical key (both ports included, direction-independent), tracks bytes per direction/rate/duration, and measures the **initial TCP RTT** from the SYN / SYN-ACK timing delta.
   - `GeoIPResolver` — LRU-cached lookups against GeoLite2 MMDBs.
   - `ProcessResolver` — endpoint → PID → executable name. Per-OS branches: Windows iphlpapi, Linux `/proc`, macOS `proc_pidfdinfo`.
-- **GUI layer (`src/ui/`)**: Dear ImGui dockspace split across `GuiLayer` (chrome + dockspace), `Dashboard`, `FlowsView`, `PacketView`, and `PacketDetail`. Consumes the queue each frame and updates derived metrics.
+- **GUI layer (`src/ui/`)**: Dear ImGui dockspace split across `GuiLayer` (chrome + dockspace + capture controls), `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView`. Consumes the queue each frame, drives the stateful reassemblers, and updates derived metrics.
 
 ## Quality
 
-- **27 unit and integration tests** (GoogleTest) covering protocol parsing, flow aggregation, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures.
-- **libFuzzer harness** on `ProtocolParser::parse` and `DNSParser::parseResponse`, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
+- **60 unit and integration tests** (GoogleTest) covering protocol parsing, link-type handling, tunnel descent, TLS/QUIC ClientHello reassembly, HTTP header extraction, DNS record coverage, canonical flow keying, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures — including an end-to-end test that drives a crafted capture file through the same pipeline the UI runs.
+- **libFuzzer harness** on `ProtocolParser::parse`, `DNSParser::parseResponse`, and the stateful `TlsReassembler` / `QuicTracker`, across every supported link type, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
 - **AddressSanitizer + UndefinedBehaviorSanitizer** CI job runs the full test suite under ASan/UBSan on every push.
 - **Three-platform CI matrix** (Windows / Ubuntu / macOS) builds the app, builds and runs the test suite, and packages release ZIPs via CPack on tag pushes. Windows test runs use a 7-Zip-extracted Npcap user-mode DLL so the kernel-driver install is unnecessary in CI.
 
