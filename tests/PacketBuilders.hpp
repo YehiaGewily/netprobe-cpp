@@ -58,6 +58,48 @@ namespace test {
         bytes.insert(bytes.end(), destination.begin(), destination.end());
     }
 
+    // Minimal 20-byte TCP header. `flags` uses the wire bit layout
+    // (0x02 SYN, 0x10 ACK, 0x18 PSH|ACK).
+    inline void appendTcpHeader(std::vector<uint8_t>& bytes, uint16_t sourcePort,
+        uint16_t destinationPort, uint32_t sequence, uint8_t flags) {
+        appendU16(bytes, sourcePort);
+        appendU16(bytes, destinationPort);
+        appendU32BE(bytes, sequence);
+        appendU32BE(bytes, 0);          // acknowledgement number
+        bytes.push_back(0x50);          // data offset = 5 words, no options
+        bytes.push_back(flags);
+        appendU16(bytes, 0xFFFF);       // window
+        appendU16(bytes, 0x0000);       // checksum
+        appendU16(bytes, 0x0000);       // urgent pointer
+    }
+
+    inline void appendUdpHeader(std::vector<uint8_t>& bytes, uint16_t sourcePort,
+        uint16_t destinationPort, uint16_t payloadLength) {
+        appendU16(bytes, sourcePort);
+        appendU16(bytes, destinationPort);
+        appendU16(bytes, static_cast<uint16_t>(8 + payloadLength));
+        appendU16(bytes, 0x0000); // checksum
+    }
+
+    // 40-byte fixed IPv6 header.
+    inline void appendIPv6Header(std::vector<uint8_t>& bytes, uint16_t payloadLength,
+        uint8_t nextHeader, const std::vector<uint8_t>& source, const std::vector<uint8_t>& destination) {
+        bytes.insert(bytes.end(), {0x60, 0x00, 0x00, 0x00});
+        appendU16(bytes, payloadLength);
+        bytes.push_back(nextHeader);
+        bytes.push_back(64); // hop limit
+        bytes.insert(bytes.end(), source.begin(), source.end());
+        bytes.insert(bytes.end(), destination.begin(), destination.end());
+    }
+
+    inline std::vector<uint8_t> makeHttpRequest(const std::string& host, const std::string& path = "/index.html") {
+        const std::string text = "GET " + path + " HTTP/1.1\r\n"
+            "User-Agent: netprobe-test\r\n"
+            "Host: " + host + "\r\n"
+            "Accept: */*\r\n\r\n";
+        return std::vector<uint8_t>(text.begin(), text.end());
+    }
+
     inline std::vector<uint8_t> makeTlsClientHello(const std::string& hostname) {
         std::vector<uint8_t> body = {0x03, 0x03};
         body.insert(body.end(), 32, 0x00); // ClientHello random
