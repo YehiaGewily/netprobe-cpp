@@ -7,6 +7,8 @@
 #include "core/FlowAggregator.hpp"
 #include "core/GeoIPResolver.hpp"
 #include "core/ProcessResolver.hpp"
+#include "core/QuicTracker.hpp"
+#include "core/TlsReassembler.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -68,12 +70,19 @@ namespace ui {
 
         // Main Application Loop
         void run();
-        
+
         // Populate device list for UI selection
         void setDevices(const std::vector<DeviceInfo>& devices);
-        
+
+        // Reflects whether a live capture is currently running (main.cpp
+        // auto-starts the first adapter, so the initial state comes from there).
+        void setCaptureActive(bool active) { m_captureActive = active; }
+
         // Callback to start capture on new device
         std::function<void(std::string)> onDeviceSelected;
+
+        // Callback to stop the running live capture.
+        std::function<void()> onCaptureStopRequested;
 
         // Callback to load an offline capture file.
         std::function<void(std::string)> onPcapFileSelected;
@@ -85,7 +94,7 @@ namespace ui {
     private:
         core::PacketQueue& m_queue;
         GLFWwindow* m_window = nullptr;
-        
+
         // Device Management
         std::vector<DeviceInfo> m_devices;
         int m_selectedDeviceIndex = 0;
@@ -104,38 +113,91 @@ namespace ui {
         std::optional<core::FlowKey> m_packetFlowFilter;
         int m_flowSortColumn = 7;
         bool m_flowSortAscending = false;
-        
+
+        // Capture lifecycle. "Paused" freezes the UI-side consumption of the
+        // queue: the capture thread keeps running and the bounded queue keeps
+        // only the freshest packets, so resuming shows current traffic.
+        bool m_captureActive = false;
+        bool m_capturePaused = false;
+
+        // Display filter: case-insensitive substring match over addresses,
+        // ports, protocol, service, and SNI of already-captured packets.
+        // Unlike the BPF filter it never affects what is captured.
+        char m_displayFilter[128]{};
+        bool m_focusDisplayFilter = false;
+
         // Statistics
         std::map<std::string, int> m_appCounts;
+        std::map<std::string, uint64_t> m_protocolCounts;
+        std::map<std::string, uint64_t> m_protocolBytes;
         core::HostnameCache m_hostnameCache;
         core::FlowAggregator m_flowAggregator;
         core::GeoIPResolver m_geoIPResolver;
         core::ProcessResolver m_processResolver;
+        core::TlsReassembler m_tlsReassembler;
+        core::QuicTracker m_quicTracker;
+
+        // Encrypted-DNS visibility. When resolution moves to DoH/DoT/DoQ the
+        // hostname cache stops filling, and the UI should say so rather than
+        // silently showing bare IP addresses.
+        uint64_t m_plaintextDnsResponses = 0;
+        uint64_t m_encryptedDnsPackets = 0;
+        bool m_echAdvertised = false;
+        bool m_dnsNoticeDismissed = false;
         ScrollingBuffer m_bandwidthData;
+        ScrollingBuffer m_tcpBandwidth;
+        ScrollingBuffer m_udpBandwidth;
         double m_lastUpdateTime = 0.0;
         uint64_t m_bytesThisSec = 0;
+        uint64_t m_tcpBytesThisSec = 0;
+        uint64_t m_udpBytesThisSec = 0;
         uint64_t m_totalPackets = 0;
-        std::vector<float> m_linearBandwidthTime;
-        std::vector<float> m_linearBandwidthData;
+        // Scratch vectors reused when linearizing ring buffers for ImPlot.
+        std::vector<float> m_scratchTime;
+        std::vector<float> m_scratchData;
         bool m_nfdInitialized = false;
         char m_bpfFilter[256]{};
         std::string m_captureStatus;
         bool m_captureStatusIsError = false;
 
+        // Rate history of the currently selected flow, sampled alongside the
+        // bandwidth tick to drive the sparkline in the flow detail pane.
+        ScrollingBuffer m_flowRateHistory{240};
+        std::optional<core::FlowKey> m_flowRateKey;
+        double m_lastFlowSampleTime = 0.0;
+
+        // Persisted preferences (netprobe-settings.ini).
+        bool m_darkTheme = true;
+        float m_uiScale = 1.0f;
+
         void processQueue();
         void renderUI();
         void clearCaptureView();
         void openPcapFile(const std::string& path);
+        void openPcapDialog();
         void applyTheme();
         void loadFonts();
+        void loadSettings();
+        void saveSettings() const;
+        void handleShortcuts();
+        void setPaused(bool paused);
+        bool exportFlowsCsv(const std::string& path, std::string& error);
+        bool packetMatchesDisplayFilter(const core::ParsedPacket& packet) const;
+        static void linearizeBuffer(const ScrollingBuffer& buffer,
+            std::vector<float>& time, std::vector<float>& data);
 
         // Panels
         void renderTopBar();
         void renderControlBar();
+        void renderEncryptedDnsNotice();
+        bool encryptedDnsDominates() const;
         void renderPacketTable();
         void renderPacketDetail();
         void renderCharts();
+        void renderEmptyState();
         void renderFlowsTable();
+        void renderFlowDetail(const core::Flow& flow, const core::GeoIPInfo& geo);
+        void renderStatsView();
         void renderKpiStrip();
 
         // Cached metrics for header tiles
