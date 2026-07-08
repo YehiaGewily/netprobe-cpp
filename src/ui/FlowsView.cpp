@@ -3,15 +3,183 @@
 #include "core/FlowAggregator.hpp"
 #include "core/GeoIPResolver.hpp"
 #include "imgui.h"
+#include "implot.h"
+#include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <format>
+#include <fstream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 namespace ui {
+
+    namespace {
+
+        std::string csvEscape(const std::string& value) {
+            if (value.find_first_of(",\"\n") == std::string::npos) return value;
+            std::string escaped = "\"";
+            for (char c : value) {
+                if (c == '"') escaped += "\"\"";
+                else escaped += c;
+            }
+            escaped += '"';
+            return escaped;
+        }
+
+        std::string organizationLabelFor(const core::GeoIPInfo& info) {
+            if (info.organization.empty()) return std::string{"-"};
+            return info.asn == 0
+                ? info.organization
+                : std::format("AS{} {}", info.asn, info.organization);
+        }
+
+        // Two-column key/value row used by the flow detail pane.
+        void detailRow(const char* key, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(kText3, "%s", key);
+            ImGui::TableSetColumnIndex(1);
+            if (value.empty() || value == "-") {
+                ImGui::TextDisabled("--");
+            } else {
+                ImGui::TextColored(kText1, "%s", value.c_str());
+                if (ImGui::CalcTextSize(value.c_str()).x > ImGui::GetContentRegionAvail().x) {
+                    ImGui::SetItemTooltip("%s", value.c_str());
+                }
+            }
+        }
+
+    }
+
+    bool GuiLayer::exportFlowsCsv(const std::string& path, std::string& error) {
+        const auto flows = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+        std::ofstream file(path, std::ios::trunc);
+        if (!file) {
+            error = "Unable to open the destination file for writing.";
+            return false;
+        }
+        file << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,country,organization,"
+                "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec\n";
+        for (const auto& flow : flows) {
+            const auto geo = m_geoIPResolver.lookup(flow.key.dstIP);
+            const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
+            const double rttMs = flow.initialRttMicroseconds > 0
+                ? static_cast<double>(flow.initialRttMicroseconds) / 1000.0
+                : 0.0;
+            const int64_t durationSec = std::max<int64_t>(0, (flow.lastSeen - flow.firstSeen) / 1'000'000);
+            file << csvEscape(host) << ','
+                 << flow.key.srcIP << ','
+                 << flow.key.srcPort << ','
+                 << flow.key.dstIP << ','
+                 << flow.key.dstPort << ','
+                 << flow.key.protocol << ','
+                 << csvEscape(flow.service) << ','
+                 << csvEscape(geo.country) << ','
+                 << csvEscape(organizationLabelFor(geo)) << ','
+                 << flow.packets << ','
+                 << flow.bytesUp << ','
+                 << flow.bytesDown << ','
+                 << std::format("{:.1f}", flow.rateBytesPerSecond) << ','
+                 << std::format("{:.2f}", rttMs) << ','
+                 << durationSec << '\n';
+        }
+        if (!file.good()) {
+            error = "Writing the CSV file failed.";
+            return false;
+        }
+        return true;
+    }
+
+    void GuiLayer::renderFlowDetail(const core::Flow& flow, const core::GeoIPInfo& geo) {
+        const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
+
+        if (m_fontBrand) ImGui::PushFont(m_fontBrand);
+        ImGui::TextColored(kText1, "%s", host.c_str());
+        if (m_fontBrand) ImGui::PopFont();
+        if (!flow.service.empty()) {
+            ImGui::SameLine();
+            drawDot(serviceColor(flow.service));
+            ImGui::SameLine();
+            ImGui::TextColored(kText2, "%s", flow.service.c_str());
+        }
+        if (ImGui::SmallButton("Show packets")) {
+            // The selection already filters Live Packets; this is a discoverable
+            // affordance that just focuses that window.
+            ImGui::SetWindowFocus("Live Packets");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear selection")) {
+            m_packetFlowFilter.reset();
+            return;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        constexpr ImGuiTableFlags kFieldFlags =
+            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody;
+        if (ImGui::BeginTable("FlowDetailFields", 2, kFieldFlags)) {
+            ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+            ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+
+            detailRow("Endpoints", std::format("{}:{}  ->  {}:{}",
+                flow.key.srcIP, flow.key.srcPort, flow.key.dstIP, flow.key.dstPort));
+            detailRow("Protocol", flow.key.protocol);
+            detailRow("Country", geo.country.empty() ? "-" : geo.country);
+            detailRow("Org", organizationLabelFor(geo));
+            // Name the direction by its endpoint rather than "up"/"down": for a
+            // peer-to-peer flow neither side is the client.
+            detailRow(std::format("{} sent", flow.key.srcIP).c_str(), formatBytes(flow.bytesUp));
+            detailRow(std::format("{} sent", flow.key.dstIP).c_str(), formatBytes(flow.bytesDown));
+            detailRow("Packets", std::format("{}", flow.packets));
+            detailRow("Rate", std::format("{}/s", formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond))));
+            if (flow.initialRttMicroseconds > 0) {
+                detailRow("Init RTT", std::format("{:.1f} ms",
+                    static_cast<double>(flow.initialRttMicroseconds) / 1000.0));
+            } else {
+                detailRow("Init RTT", "");
+            }
+            detailRow("Duration", formatDuration(flow.firstSeen, flow.lastSeen));
+
+            ImGui::EndTable();
+        }
+
+        if (flow.encryptedTunnel) {
+            ImGui::Spacing();
+            ImGui::TextColored(kWarning, "Encrypted tunnel");
+            ImGui::TextWrapped(
+                "This flow carries other traffic inside it. NetProbe can measure "
+                "the tunnel but cannot see the conversations within.");
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(kText3, "RATE — last 2 minutes");
+        if (ImPlot::BeginPlot("##flowRate", ImVec2(-1, 110),
+                ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoLegend |
+                ImPlotFlags_NoBoxSelect | ImPlotFlags_NoFrame)) {
+            ImPlot::SetupAxes(nullptr, nullptr,
+                ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks,
+                ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_AutoFit);
+            ImPlot::SetupAxisLimits(ImAxis_X1, glfwGetTime() - 120.0, glfwGetTime(), ImGuiCond_Always);
+            linearizeBuffer(m_flowRateHistory, m_scratchTime, m_scratchData);
+            if (!m_scratchData.empty()) {
+                ImPlot::PlotShaded("B/s",
+                    m_scratchTime.data(), m_scratchData.data(),
+                    static_cast<int>(m_scratchData.size()), 0.0,
+                    ImPlotSpec(ImPlotProp_FillColor, kAccent,
+                               ImPlotProp_FillAlpha, 0.18f));
+                ImPlot::PlotLine("B/s",
+                    m_scratchTime.data(), m_scratchData.data(),
+                    static_cast<int>(m_scratchData.size()),
+                    ImPlotSpec(ImPlotProp_LineColor, kAccent,
+                               ImPlotProp_LineWeight, 1.5f));
+            }
+            ImPlot::EndPlot();
+        }
+    }
 
     void GuiLayer::renderFlowsTable() {
         ImGui::Begin("Flows");
@@ -26,6 +194,42 @@ namespace ui {
             }
             maxFlowBytes = std::max<uint64_t>(maxFlowBytes, flow.bytesUp + flow.bytesDown);
         }
+
+        // Locate the selected flow (if any) and keep its rate history sampled
+        // so the detail pane can draw a sparkline. Copied by value because the
+        // flows vector is re-sorted below.
+        std::optional<core::Flow> selectedFlow;
+        if (m_packetFlowFilter) {
+            for (const auto& flow : flows) {
+                if (flow.key == *m_packetFlowFilter) { selectedFlow = flow; break; }
+            }
+        }
+        if (selectedFlow) {
+            if (!m_flowRateKey || !(*m_flowRateKey == selectedFlow->key)) {
+                m_flowRateKey = selectedFlow->key;
+                m_flowRateHistory.Erase();
+                m_lastFlowSampleTime = 0.0;
+            }
+            const double now = glfwGetTime();
+            if (now - m_lastFlowSampleTime >= 0.5) {
+                m_flowRateHistory.AddPoint(static_cast<float>(now),
+                    static_cast<float>(selectedFlow->rateBytesPerSecond));
+                m_lastFlowSampleTime = now;
+            }
+        } else if (m_flowRateKey) {
+            m_flowRateKey.reset();
+            m_flowRateHistory.Erase();
+        }
+
+        // When a flow is selected the window splits: table left, detail right.
+        const float detailWidth = 330.0f;
+        const bool showDetail = selectedFlow.has_value()
+            && ImGui::GetContentRegionAvail().x > detailWidth + 260.0f;
+        if (showDetail) {
+            ImGui::BeginChild("##flowTableHost",
+                ImVec2(ImGui::GetContentRegionAvail().x - detailWidth - 8.0f, 0), false);
+        }
+
         constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_ScrollY
             | ImGuiTableFlags_RowBg
             | ImGuiTableFlags_Borders
@@ -51,21 +255,15 @@ namespace ui {
                 sortSpecs->SpecsDirty = false;
             }
 
-            const auto organizationLabel = [](const core::GeoIPInfo& info) {
-                if (info.organization.empty()) return std::string{"-"};
-                return info.asn == 0
-                    ? info.organization
-                    : std::format("AS{} {}", info.asn, info.organization);
-            };
-            const auto compareFlows = [this, &geoInfoByIp, &organizationLabel](const core::Flow& left, const core::Flow& right) {
+            const auto compareFlows = [this, &geoInfoByIp](const core::Flow& left, const core::Flow& right) {
                 const std::string& leftHost = left.hostname.empty() ? left.key.dstIP : left.hostname;
                 const std::string& rightHost = right.hostname.empty() ? right.key.dstIP : right.hostname;
                 const auto& leftGeo = geoInfoByIp.at(left.key.dstIP);
                 const auto& rightGeo = geoInfoByIp.at(right.key.dstIP);
                 const std::string leftCountry = leftGeo.country.empty() ? "-" : leftGeo.country;
                 const std::string rightCountry = rightGeo.country.empty() ? "-" : rightGeo.country;
-                const std::string leftOrganization = organizationLabel(leftGeo);
-                const std::string rightOrganization = organizationLabel(rightGeo);
+                const std::string leftOrganization = organizationLabelFor(leftGeo);
+                const std::string rightOrganization = organizationLabelFor(rightGeo);
                 const uint64_t leftBytes = left.bytesUp + left.bytesDown;
                 const uint64_t rightBytes = right.bytesUp + right.bytesDown;
 
@@ -106,7 +304,7 @@ namespace ui {
                     const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
                     const auto& geoInfo = geoInfoByIp.at(flow.key.dstIP);
                     const std::string country = geoInfo.country.empty() ? "-" : geoInfo.country;
-                    const std::string organization = organizationLabel(geoInfo);
+                    const std::string organization = organizationLabelFor(geoInfo);
                     const uint64_t totalBytes = flow.bytesUp + flow.bytesDown;
                     const bool selected = m_packetFlowFilter && *m_packetFlowFilter == flow.key;
 
@@ -115,12 +313,24 @@ namespace ui {
                     ImGui::TableSetColumnIndex(0);
                     if (ImGui::Selectable(host.c_str(), selected,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
-                        m_packetFlowFilter = flow.key;
+                        // Click toggles: selecting an already-selected flow clears it.
+                        if (selected) {
+                            m_packetFlowFilter.reset();
+                        } else {
+                            m_packetFlowFilter = flow.key;
+                        }
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s\n%s -> %s:%u", host.c_str(),
+                            flow.key.srcIP.c_str(), flow.key.dstIP.c_str(), flow.key.dstPort);
                     }
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(country.c_str());
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextUnformatted(organization.c_str());
+                    if (organization.size() > 24 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s", organization.c_str());
+                    }
                     ImGui::TableSetColumnIndex(3);
                     if (flow.service.empty()) {
                         ImGui::TextDisabled("--");
@@ -180,6 +390,21 @@ namespace ui {
 
             ImGui::EndTable();
         }
+
+        if (showDetail) {
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, kBgSurface);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 12));
+            if (ImGui::BeginChild("##flowDetail", ImVec2(detailWidth, 0), true)) {
+                renderFlowDetail(*selectedFlow, geoInfoByIp.at(selectedFlow->key.dstIP));
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+        }
+
         ImGui::End();
     }
 
