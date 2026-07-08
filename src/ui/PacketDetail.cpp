@@ -1,5 +1,6 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
+#include "core/LinkType.hpp"
 #include "imgui.h"
 
 #include <chrono>
@@ -120,6 +121,26 @@ namespace ui {
         // user can return to the empty state.
         ImGui::TextColored(kText3, "PACKET #%d", m_selectedPacketIndex);
         ImGui::SameLine();
+        if (ImGui::SmallButton("Copy summary")) {
+            std::string flags;
+            if (p.tcpSyn) flags += "SYN ";
+            if (p.tcpAck) flags += "ACK ";
+            if (!flags.empty()) flags.pop_back();
+            const std::string summary = std::format(
+                "Timestamp: {}\nSource: {}:{}\nDest: {}:{}\nProtocol: {}{}\n"
+                "Wire length: {} bytes\nTunnel: {}\nService: {}\nSNI: {}\nInfo: {}\n",
+                formatTimestamp(p.timestamp),
+                p.srcIP, p.srcPort, p.dstIP, p.dstPort,
+                p.protocol, flags.empty() ? "" : " [" + flags + "]",
+                record.raw.length,
+                p.tunnel.empty() ? "--" : p.tunnel,
+                p.service.empty() ? "--" : p.service,
+                p.sni.empty() ? "--" : p.sni,
+                p.info.empty() ? "--" : p.info);
+            ImGui::SetClipboardText(summary.c_str());
+        }
+        ImGui::SetItemTooltip("Copy the decoded fields to the clipboard");
+        ImGui::SameLine();
         if (ImGui::SmallButton("Clear selection")) {
             m_selectedPacketIndex = -1;
             ImGui::End();
@@ -138,8 +159,18 @@ namespace ui {
 
             groupHeader("Frame");
             kv("Timestamp", formatTimestamp(p.timestamp));
+            kv("Link type", linkTypeName(record.raw.linkType));
             kv("Wire length", std::format("{} bytes", record.raw.length));
             kv("Captured", std::format("{} bytes", record.raw.capturedLength));
+
+            // Only present when the packet was encapsulated; the addresses above
+            // the tunnel are the carrier, not the real conversation.
+            if (!p.tunnel.empty()) {
+                groupHeader("Tunnel");
+                kvColored("Encapsulation", p.tunnel, kWarning);
+                kv("Outer source", p.outerSrcIP);
+                kv("Outer dest", p.outerDstIP);
+            }
 
             groupHeader("Network");
             kv("Source IP", p.srcIP);
@@ -154,9 +185,15 @@ namespace ui {
                     std::string flags;
                     if (p.tcpSyn) flags += "SYN ";
                     if (p.tcpAck) flags += "ACK ";
+                    if (p.tcpFin) flags += "FIN ";
+                    if (p.tcpRst) flags += "RST ";
                     if (!flags.empty()) flags.pop_back();
                     kv("TCP flags", flags);
+                    kv("Sequence", std::format("{}", p.tcpSeq));
                 }
+                kv("Payload", p.payloadLength == 0
+                    ? std::string{}
+                    : std::format("{} bytes", p.payloadLength));
             }
 
             groupHeader("Application");
@@ -166,6 +203,10 @@ namespace ui {
                 kv("Service", "");
             }
             kv("SNI", p.sni);
+            kv("Info", p.info);
+            if (!p.hostname.empty()) {
+                kv("Host header", p.hostname);
+            }
             if (auto host = m_hostnameCache.lookup(p.dstIP)) {
                 kv("Hostname", *host);
             } else if (auto host2 = m_hostnameCache.lookup(p.srcIP)) {
@@ -180,6 +221,13 @@ namespace ui {
             }
 
             ImGui::EndTable();
+        }
+
+        if (p.encryptedTunnel) {
+            ImGui::Spacing();
+            ImGui::TextColored(kWarning,
+                "Payload is encrypted by the tunnel. The inner addresses and\n"
+                "protocols cannot be recovered without the tunnel's keys.");
         }
 
         ImGui::Spacing();
