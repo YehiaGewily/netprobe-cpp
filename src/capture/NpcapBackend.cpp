@@ -31,6 +31,7 @@ namespace capture {
                 char errorBuffer[PCAP_ERRBUF_SIZE]{};
                 m_handle = pcap_open(deviceName.c_str(), 65536, PCAP_OPENFLAG_PROMISCUOUS, 1000, nullptr, errorBuffer);
                 if (!m_handle) error = errorBuffer;
+                cacheLinkType();
                 return m_handle != nullptr;
             }
 
@@ -39,6 +40,7 @@ namespace capture {
                 char errorBuffer[PCAP_ERRBUF_SIZE]{};
                 m_handle = pcap_open_offline(path.c_str(), errorBuffer);
                 if (!m_handle) error = errorBuffer;
+                cacheLinkType();
                 return m_handle != nullptr;
             }
 
@@ -65,7 +67,7 @@ namespace capture {
                 const int result = pcap_next_ex(m_handle, &header, &bytes);
                 if (result == 1) {
                     const int64_t timestamp = static_cast<int64_t>(header->ts.tv_sec) * 1'000'000 + header->ts.tv_usec;
-                    packet = core::PacketData(timestamp, header->len, header->caplen, bytes);
+                    packet = core::PacketData(timestamp, header->len, header->caplen, bytes, m_linkType);
                     return PacketReadStatus::Packet;
                 }
                 if (result == 0) return PacketReadStatus::Timeout;
@@ -79,12 +81,22 @@ namespace capture {
                     pcap_close(m_handle);
                     m_handle = nullptr;
                 }
+                m_linkType = core::LinkType::Ethernet;
             }
 
             bool isOpen() const override { return m_handle != nullptr; }
 
+            core::LinkType linkType() const override { return m_linkType; }
+
         private:
+            void cacheLinkType() {
+                m_linkType = m_handle
+                    ? core::linkTypeFromDlt(pcap_datalink(m_handle))
+                    : core::LinkType::Ethernet;
+            }
+
             pcap_t* m_handle = nullptr;
+            core::LinkType m_linkType = core::LinkType::Ethernet;
         };
     }
 

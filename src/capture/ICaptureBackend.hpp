@@ -31,6 +31,10 @@ namespace capture {
         virtual PacketReadStatus nextPacket(core::PacketData& packet, std::string& error) = 0;
         virtual void close() = 0;
         virtual bool isOpen() const = 0;
+
+        // Link-layer encapsulation of the currently open handle. Only meaningful
+        // between a successful open()/openFile() and the matching close().
+        virtual core::LinkType linkType() const = 0;
     };
 
     std::unique_ptr<ICaptureBackend> createPlatformCaptureBackend();
