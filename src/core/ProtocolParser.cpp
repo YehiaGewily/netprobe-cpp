@@ -12,6 +12,12 @@ namespace core {
         constexpr uint16_t kEthIPv4    = 0x0800;
         constexpr uint16_t kEthARP     = 0x0806;
         constexpr uint16_t kEthIPv6    = 0x86DD;
+        constexpr uint16_t kEthMplsUni = 0x8847;
+        constexpr uint16_t kEthMplsMul = 0x8848;
+        constexpr uint16_t kEthPppoeSess = 0x8864;
+        constexpr uint16_t kEthTrBridge  = 0x6558;
+
+        constexpr int kMaxTunnelDepth = 4;
 
         uint16_t readU16(const uint8_t* bytes) {
             return static_cast<uint16_t>(bytes[0]) << 8 | bytes[1];
@@ -55,6 +61,15 @@ namespace core {
             std::transform(out.begin(), out.end(), out.begin(),
                 [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
             return out;
+        }
+
+        void pushTunnel(ParsedPacket& p, const char* name) {
+            if (p.outerSrcIP.empty() && !p.srcIP.empty()) {
+                p.outerSrcIP = p.srcIP;
+                p.outerDstIP = p.dstIP;
+            }
+            if (p.tunnel.empty()) p.tunnel = name;
+            else                  p.tunnel += std::string("/") + name;
         }
 
         bool decodeLinkLayer(const uint8_t* buffer, size_t size, LinkType link,
@@ -139,6 +154,100 @@ namespace core {
         void decodeNetwork(const uint8_t* buffer, size_t end, size_t offset,
                            uint16_t etherType, ParsedPacket& p, int depth);
 
+        void decodeInnerEthernet(const uint8_t* buffer, size_t end, size_t offset,
+                                 ParsedPacket& p, int depth) {
+            size_t innerOffset = 0;
+            uint16_t innerEtherType = 0;
+            if (offset >= end) return;
+            if (!decodeLinkLayer(buffer + offset, end - offset, LinkType::Ethernet,
+                                 innerOffset, innerEtherType)) {
+                return;
+            }
+            decodeNetwork(buffer, end, offset + innerOffset, innerEtherType, p, depth + 1);
+        }
+
+        void decodeGre(const uint8_t* buffer, size_t end, size_t offset,
+                       ParsedPacket& p, int depth) {
+            if (end < offset + 4) return;
+            const uint16_t flags = readU16(buffer + offset);
+            const uint16_t innerType = readU16(buffer + offset + 2);
+            if ((flags & 0x0007) != 0) return;
+
+            size_t headerLen = 4;
+            if (flags & 0x8000) headerLen += 4;
+            if (flags & 0x2000) headerLen += 4;
+            if (flags & 0x1000) headerLen += 4;
+            if (end < offset + headerLen) return;
+
+            pushTunnel(p, "GRE");
+            const size_t innerOffset = offset + headerLen;
+            if (innerType == kEthTrBridge) {
+                decodeInnerEthernet(buffer, end, innerOffset, p, depth);
+            } else if (innerType == kEthIPv4 || innerType == kEthIPv6) {
+                decodeNetwork(buffer, end, innerOffset, innerType, p, depth + 1);
+            }
+        }
+
+        void decodeVxlan(const uint8_t* buffer, size_t end, size_t offset,
+                         ParsedPacket& p, int depth) {
+            constexpr size_t vxlanHeader = 8;
+            if (end < offset + vxlanHeader) return;
+            if ((buffer[offset] & 0x08) == 0) return;
+            pushTunnel(p, "VXLAN");
+            decodeInnerEthernet(buffer, end, offset + vxlanHeader, p, depth);
+        }
+
+        void decodeGeneve(const uint8_t* buffer, size_t end, size_t offset,
+                          ParsedPacket& p, int depth) {
+            constexpr size_t geneveBase = 8;
+            if (end < offset + geneveBase) return;
+            const uint8_t verOptLen = buffer[offset];
+            if ((verOptLen >> 6) != 0) return;
+            const size_t optionsLen = static_cast<size_t>(verOptLen & 0x3F) * 4;
+            const uint16_t innerType = readU16(buffer + offset + 2);
+            const size_t innerOffset = offset + geneveBase + optionsLen;
+            if (end < innerOffset) return;
+
+            pushTunnel(p, "GENEVE");
+            if (innerType == kEthTrBridge) {
+                decodeInnerEthernet(buffer, end, innerOffset, p, depth);
+            } else if (innerType == kEthIPv4 || innerType == kEthIPv6) {
+                decodeNetwork(buffer, end, innerOffset, innerType, p, depth + 1);
+            }
+        }
+
+        void decodeMpls(const uint8_t* buffer, size_t end, size_t offset,
+                        ParsedPacket& p, int depth) {
+            size_t pos = offset;
+            for (int label = 0; label < 8; ++label) {
+                if (end < pos + 4) return;
+                const bool bottomOfStack = (buffer[pos + 2] & 0x01) != 0;
+                pos += 4;
+                if (!bottomOfStack) continue;
+
+                if (pos >= end) return;
+                const uint8_t version = buffer[pos] >> 4;
+                if (version != 4 && version != 6) return;
+                pushTunnel(p, "MPLS");
+                decodeNetwork(buffer, end, pos, version == 4 ? kEthIPv4 : kEthIPv6, p, depth + 1);
+                return;
+            }
+        }
+
+        void decodePppoe(const uint8_t* buffer, size_t end, size_t offset,
+                         ParsedPacket& p, int depth) {
+            constexpr size_t pppoeHeader = 6;
+            if (end < offset + pppoeHeader + 2) return;
+            const uint16_t pppProtocol = readU16(buffer + offset + pppoeHeader);
+            const size_t innerOffset = offset + pppoeHeader + 2;
+            uint16_t innerType = 0;
+            if (pppProtocol == 0x0021)      innerType = kEthIPv4;
+            else if (pppProtocol == 0x0057) innerType = kEthIPv6;
+            else return;
+            pushTunnel(p, "PPPoE");
+            decodeNetwork(buffer, end, innerOffset, innerType, p, depth + 1);
+        }
+
         void decodeTcp(const uint8_t* buffer, size_t end, size_t offset, ParsedPacket& p) {
             p.protocol = "TCP";
             if (end < offset + sizeof(TCPHeader)) return;
@@ -179,6 +288,17 @@ namespace core {
 
             p.payloadOffset = payloadOffset;
             p.payloadLength = udpEnd - payloadOffset;
+
+            if (depth < kMaxTunnelDepth) {
+                if (p.dstPort == 4789 || p.srcPort == 4789) {
+                    decodeVxlan(buffer, udpEnd, payloadOffset, p, depth);
+                    return;
+                }
+                if (p.dstPort == 6081 || p.srcPort == 6081) {
+                    decodeGeneve(buffer, udpEnd, payloadOffset, p, depth);
+                    return;
+                }
+            }
         }
 
         void decodeIcmp(const uint8_t* buffer, size_t end, size_t offset, ParsedPacket& p) {
@@ -228,6 +348,32 @@ namespace core {
             case 17: decodeUdp(buffer, end, offset, p, depth); return;
             case 1:  decodeIcmp(buffer, end, offset, p); return;
             case 58: decodeIcmpv6(buffer, end, offset, p); return;
+            case 4:
+                if (depth < kMaxTunnelDepth) {
+                    pushTunnel(p, "IP-in-IP");
+                    decodeNetwork(buffer, end, offset, kEthIPv4, p, depth + 1);
+                    return;
+                }
+                break;
+            case 41:
+                if (depth < kMaxTunnelDepth) {
+                    pushTunnel(p, "6in4");
+                    decodeNetwork(buffer, end, offset, kEthIPv6, p, depth + 1);
+                    return;
+                }
+                break;
+            case 47:
+                if (depth < kMaxTunnelDepth) {
+                    decodeGre(buffer, end, offset, p, depth);
+                    if (p.protocol.empty() || p.protocol == "Unknown") p.protocol = "GRE";
+                    return;
+                }
+                break;
+            case 50:
+                p.protocol = "ESP";
+                p.service = "IPsec (encrypted)";
+                p.encryptedTunnel = true;
+                return;
             default: break;
             }
 
@@ -240,6 +386,19 @@ namespace core {
 
         void decodeNetwork(const uint8_t* buffer, size_t end, size_t offset,
                            uint16_t etherType, ParsedPacket& p, int depth) {
+            if (depth > kMaxTunnelDepth) return;
+
+            if (etherType == kEthMplsUni || etherType == kEthMplsMul) {
+                decodeMpls(buffer, end, offset, p, depth);
+                if (p.protocol == "Unknown") p.protocol = "MPLS";
+                return;
+            }
+            if (etherType == kEthPppoeSess) {
+                decodePppoe(buffer, end, offset, p, depth);
+                if (p.protocol == "Unknown") p.protocol = "PPPoE";
+                return;
+            }
+
             if (etherType == kEthIPv4) {
                 if (end < offset + sizeof(IPv4Header)) return;
                 const uint8_t versionHlen = buffer[offset];
@@ -567,6 +726,11 @@ namespace core {
         } else if (parsed.protocol == "UDP") {
             classifyUdpPort(parsed.dstPort, parsed);
             classifyUdpPort(parsed.srcPort, parsed);
+        }
+
+        if (parsed.service == "WireGuard" || parsed.service == "OpenVPN"
+            || parsed.service == "IPsec") {
+            parsed.encryptedTunnel = true;
         }
 
         return parsed;
