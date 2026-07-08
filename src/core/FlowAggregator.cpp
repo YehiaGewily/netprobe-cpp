@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <tuple>
 
 namespace core {
     namespace {
@@ -9,30 +10,37 @@ namespace core {
 
         bool isLikelyServerPort(uint16_t port) {
             switch (port) {
+            case 1194:  // OpenVPN
+            case 1433:  // MSSQL
             case 3306:  // MySQL
             case 3478:  // STUN
             case 5222:  // XMPP
             case 5432:  // PostgreSQL
+            case 5900:  // VNC
             case 6379:  // Redis
+            case 6443:  // Kubernetes API
             case 8080:
             case 8443:
+            case 9092:  // Kafka
+            case 9200:  // Elasticsearch
             case 27017: // MongoDB
+            case 51820: // WireGuard
                 return true;
             default:
                 return port > 0 && port <= 1024;
             }
         }
-
-        bool isServerToClient(const ParsedPacket& packet) {
-            return isLikelyServerPort(packet.srcPort) && !isLikelyServerPort(packet.dstPort);
-        }
     }
 
     size_t FlowAggregator::FlowKeyHash::operator()(const FlowKey& key) const noexcept {
         size_t hash = std::hash<std::string>{}(key.srcIP);
-        hash ^= std::hash<std::string>{}(key.dstIP) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint16_t>{}(key.dstPort) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<std::string>{}(key.protocol) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+        const auto mix = [&hash](size_t value) {
+            hash ^= value + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+        };
+        mix(std::hash<std::string>{}(key.dstIP));
+        mix(std::hash<uint16_t>{}(key.srcPort));
+        mix(std::hash<uint16_t>{}(key.dstPort));
+        mix(std::hash<std::string>{}(key.protocol));
         return hash;
     }
 
@@ -42,15 +50,34 @@ namespace core {
             return std::nullopt;
         }
 
-        if (isServerToClient(packet)) {
-            return FlowKey{packet.dstIP, packet.srcIP, packet.srcPort, packet.protocol};
-        }
-        return FlowKey{packet.srcIP, packet.dstIP, packet.dstPort, packet.protocol};
+        const bool srcIsServer = isLikelyServerPort(packet.srcPort) && !isLikelyServerPort(packet.dstPort);
+        const bool dstIsServer = isLikelyServerPort(packet.dstPort) && !isLikelyServerPort(packet.srcPort);
+
+        const auto forward = [&] {
+            return FlowKey{packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort, packet.protocol};
+        };
+        const auto reversed = [&] {
+            return FlowKey{packet.dstIP, packet.srcIP, packet.dstPort, packet.srcPort, packet.protocol};
+        };
+
+        if (srcIsServer) return reversed();
+        if (dstIsServer) return forward();
+
+        // Neither endpoint looks like a server — peer-to-peer media, BitTorrent,
+        // game traffic. Order the two endpoints deterministically so that both
+        // directions hash to the same flow instead of appearing as two.
+        return std::tie(packet.srcIP, packet.srcPort) <= std::tie(packet.dstIP, packet.dstPort)
+            ? forward()
+            : reversed();
     }
 
     bool FlowAggregator::matches(const ParsedPacket& packet, const FlowKey& key) {
         const auto packetKey = keyFor(packet);
         return packetKey && *packetKey == key;
+    }
+
+    bool FlowAggregator::isDownstream(const ParsedPacket& packet, const FlowKey& key) {
+        return packet.srcIP == key.dstIP && packet.srcPort == key.dstPort;
     }
 
     void FlowAggregator::update(const ParsedPacket& packet, const std::string& hostname) {
@@ -66,12 +93,13 @@ namespace core {
 
         state.flow.lastSeen = packet.timestamp;
         ++state.flow.packets;
-        const bool downstream = isServerToClient(packet);
+        const bool downstream = isDownstream(packet, *key);
         if (downstream) {
             state.flow.bytesDown += packet.length;
         } else {
             state.flow.bytesUp += packet.length;
         }
+        if (packet.encryptedTunnel) state.flow.encryptedTunnel = true;
 
         // Initial-RTT tracking: outgoing SYN (no ACK) starts the timer,
         // matching SYN-ACK from the server stops it. Only record once per
@@ -88,6 +116,7 @@ namespace core {
 
         if (!hostname.empty()) state.flow.hostname = hostname;
         if (!packet.sni.empty()) state.flow.hostname = packet.sni;
+        else if (!packet.hostname.empty()) state.flow.hostname = packet.hostname;
         if (!packet.service.empty()) state.flow.service = packet.service;
 
         state.recentTraffic.push_back({packet.timestamp, packet.length});
@@ -99,8 +128,11 @@ namespace core {
 
     void FlowAggregator::setHostnameForAddress(const std::string& ip, const std::string& hostname) {
         if (ip.empty() || hostname.empty()) return;
+        // Either endpoint may be the one that was just resolved: for ordinary
+        // traffic that is the destination, but mDNS and PTR answers name devices
+        // on the local network that appear as the source of inbound flows.
         for (auto& [key, state] : m_flows) {
-            if (key.dstIP == ip) state.flow.hostname = hostname;
+            if (key.dstIP == ip || key.srcIP == ip) state.flow.hostname = hostname;
         }
     }
 
