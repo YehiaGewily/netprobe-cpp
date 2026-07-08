@@ -5,6 +5,7 @@
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -12,12 +13,46 @@ namespace core {
 
     namespace {
 
-        // RFC 9001 §5.2 — the salt used to derive QUIC v1 Initial secrets.
+        constexpr uint32_t kQuicV1 = 0x00000001; // RFC 9000
+        constexpr uint32_t kQuicV2 = 0x6b3343cf; // RFC 9369
+
+        // RFC 9001 §5.2 — salt used to derive QUIC v1 Initial secrets.
         constexpr uint8_t kInitialSaltV1[20] = {
             0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3,
             0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
             0xcc, 0xbb, 0x7f, 0x0a
         };
+
+        // RFC 9369 §3.3.1 — QUIC v2 uses a different salt *and* different
+        // key-derivation labels, so a v1 parser silently fails to decrypt v2.
+        constexpr uint8_t kInitialSaltV2[20] = {
+            0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb,
+            0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb,
+            0xf9, 0xbd, 0x2e, 0xd9
+        };
+
+        // Per-version constants that differ between v1 and v2.
+        struct VersionParams {
+            const uint8_t* salt;
+            const char* keyLabel;
+            const char* ivLabel;
+            const char* hpLabel;
+            uint8_t initialTypeBits; // value of (firstByte & 0x30) for an Initial
+        };
+
+        bool versionParams(uint32_t version, VersionParams& out) {
+            if (version == kQuicV1) {
+                out = {kInitialSaltV1, "quic key", "quic iv", "quic hp", 0x00};
+                return true;
+            }
+            if (version == kQuicV2) {
+                // RFC 9369 §3.2 remaps the long-header type codes: Initial is
+                // 0b01 rather than 0b00.
+                out = {kInitialSaltV2, "quicv2 key", "quicv2 iv", "quicv2 hp", 0x10};
+                return true;
+            }
+            return false;
+        }
 
         struct InitialKeys {
             uint8_t key[16]; // AES-128 key for GCM payload encryption
@@ -38,6 +73,13 @@ namespace core {
             }
             pos += len;
             return true;
+        }
+
+        uint32_t readU32(const uint8_t* bytes) {
+            return (static_cast<uint32_t>(bytes[0]) << 24)
+                 | (static_cast<uint32_t>(bytes[1]) << 16)
+                 | (static_cast<uint32_t>(bytes[2]) << 8)
+                 |  static_cast<uint32_t>(bytes[3]);
         }
 
         bool hkdfExtract(const uint8_t* salt, size_t saltLen,
@@ -72,16 +114,20 @@ namespace core {
                 && mbedtls_hkdf_expand(md, secret, secretLen, info, p, out, outLen) == 0;
         }
 
-        bool deriveClientInitialKeys(const uint8_t* dcid, size_t dcidLen, InitialKeys& out) {
+        bool deriveClientInitialKeys(const VersionParams& params,
+                                     const uint8_t* dcid, size_t dcidLen,
+                                     InitialKeys& out) {
             uint8_t initialSecret[32];
-            if (!hkdfExtract(kInitialSaltV1, sizeof(kInitialSaltV1), dcid, dcidLen, initialSecret)) {
-                return false;
-            }
+            if (!hkdfExtract(params.salt, 20, dcid, dcidLen, initialSecret)) return false;
+
             uint8_t clientSecret[32];
             if (!hkdfExpandLabel(initialSecret, 32, "client in", 9, clientSecret, 32)) return false;
-            if (!hkdfExpandLabel(clientSecret, 32, "quic key", 8, out.key, 16)) return false;
-            if (!hkdfExpandLabel(clientSecret, 32, "quic iv", 7, out.iv, 12)) return false;
-            if (!hkdfExpandLabel(clientSecret, 32, "quic hp", 7, out.hp, 16)) return false;
+            if (!hkdfExpandLabel(clientSecret, 32, params.keyLabel,
+                    std::strlen(params.keyLabel), out.key, 16)) return false;
+            if (!hkdfExpandLabel(clientSecret, 32, params.ivLabel,
+                    std::strlen(params.ivLabel), out.iv, 12)) return false;
+            if (!hkdfExpandLabel(clientSecret, 32, params.hpLabel,
+                    std::strlen(params.hpLabel), out.hp, 16)) return false;
             return true;
         }
 
@@ -142,12 +188,12 @@ namespace core {
             return rc == 0;
         }
 
-        // Walk the decrypted Initial payload, collecting CRYPTO frames into a
-        // contiguous TLS handshake stream by offset. Skips PADDING/PING/ACK; any
-        // other frame type causes us to bail (we shouldn't see those in a client
-        // Initial that contains the ClientHello).
-        bool reassembleCryptoStream(const uint8_t* plaintext, size_t len,
-                                    std::vector<uint8_t>& outStream) {
+        // Walk the decrypted Initial payload, collecting CRYPTO frames. Skips
+        // PADDING/PING/ACK; any other frame type causes us to bail (we shouldn't
+        // see those in a client Initial that contains the ClientHello).
+        bool collectCryptoFrames(const uint8_t* plaintext, size_t len,
+                                 std::vector<QuicParser::CryptoFragment>& out) {
+            constexpr uint64_t kSaneCryptoBound = 1u << 24;
             size_t pos = 0;
             while (pos < len) {
                 const uint8_t frameType = plaintext[pos++];
@@ -162,6 +208,7 @@ namespace core {
                     if (!readVarint(plaintext, len, pos, ackDelay))   return false;
                     if (!readVarint(plaintext, len, pos, rangeCount)) return false;
                     if (!readVarint(plaintext, len, pos, firstRange)) return false;
+                    if (rangeCount > len) return false; // bound the loop below
                     for (uint64_t i = 0; i < rangeCount; ++i) {
                         uint64_t gap, rangeLen;
                         if (!readVarint(plaintext, len, pos, gap))      return false;
@@ -179,12 +226,13 @@ namespace core {
                     uint64_t offset = 0, dataLen = 0;
                     if (!readVarint(plaintext, len, pos, offset))  return false;
                     if (!readVarint(plaintext, len, pos, dataLen)) return false;
-                    if (pos + dataLen > len) return false;
-                    if (offset > (1u << 24) || dataLen > (1u << 24)) return false; // sanity cap
-                    const size_t end = static_cast<size_t>(offset) + static_cast<size_t>(dataLen);
-                    if (outStream.size() < end) outStream.resize(end);
-                    std::memcpy(outStream.data() + offset, plaintext + pos, dataLen);
-                    pos += dataLen;
+                    if (dataLen > len - pos) return false;
+                    if (offset > kSaneCryptoBound || dataLen > kSaneCryptoBound) return false;
+                    QuicParser::CryptoFragment fragment;
+                    fragment.offset = offset;
+                    fragment.data.assign(plaintext + pos, plaintext + pos + dataLen);
+                    out.push_back(std::move(fragment));
+                    pos += static_cast<size_t>(dataLen);
                     break;
                 }
                 default:
@@ -196,91 +244,88 @@ namespace core {
             return true;
         }
 
-        // Parse a TLS 1.3 handshake header + ClientHello message and return the
-        // SNI hostname, if present.
-        std::optional<std::string> extractSniFromClientHello(const uint8_t* data, size_t size) {
-            if (size < 4) return std::nullopt;
-            if (data[0] != 0x01) return std::nullopt; // not ClientHello
-            const size_t bodyLen = (static_cast<size_t>(data[1]) << 16)
-                                 | (static_cast<size_t>(data[2]) << 8)
-                                 |  static_cast<size_t>(data[3]);
-            if (4 + bodyLen > size) return std::nullopt;
-            const uint8_t* body = data + 4;
-            size_t pos = 0;
-
-            // legacy_version (2) + random (32)
-            if (pos + 34 > bodyLen) return std::nullopt;
-            pos += 34;
-
-            // session_id<0..32>
-            if (pos + 1 > bodyLen) return std::nullopt;
-            const uint8_t sidLen = body[pos++];
-            if (pos + sidLen > bodyLen) return std::nullopt;
-            pos += sidLen;
-
-            // cipher_suites<2..2^16-2>
-            if (pos + 2 > bodyLen) return std::nullopt;
-            const uint16_t csLen = (static_cast<uint16_t>(body[pos]) << 8) | body[pos + 1];
-            pos += 2;
-            if (pos + csLen > bodyLen) return std::nullopt;
-            pos += csLen;
-
-            // legacy_compression_methods<1..2^8-1>
-            if (pos + 1 > bodyLen) return std::nullopt;
-            const uint8_t compLen = body[pos++];
-            if (pos + compLen > bodyLen) return std::nullopt;
-            pos += compLen;
-
-            // extensions<8..2^16-1>
-            if (pos + 2 > bodyLen) return std::nullopt;
-            const uint16_t extLen = (static_cast<uint16_t>(body[pos]) << 8) | body[pos + 1];
-            pos += 2;
-            if (pos + extLen > bodyLen) return std::nullopt;
-            const uint8_t* p   = body + pos;
-            const uint8_t* end = p + extLen;
-
-            while (p + 4 <= end) {
-                const uint16_t extType = (static_cast<uint16_t>(p[0]) << 8) | p[1];
-                const uint16_t extDataLen = (static_cast<uint16_t>(p[2]) << 8) | p[3];
-                p += 4;
-                if (p + extDataLen > end) return std::nullopt;
-
-                if (extType == 0x0000) { // server_name (RFC 6066)
-                    if (extDataLen < 5) { p += extDataLen; continue; }
-                    const uint16_t listLen = (static_cast<uint16_t>(p[0]) << 8) | p[1];
-                    if (static_cast<size_t>(listLen) + 2 > extDataLen) { p += extDataLen; continue; }
-                    const uint8_t* sl = p + 2;
-                    if (listLen < 3) { p += extDataLen; continue; }
-                    const uint8_t nameType = sl[0];
-                    if (nameType != 0x00) { p += extDataLen; continue; } // host_name
-                    const uint16_t nameLen = (static_cast<uint16_t>(sl[1]) << 8) | sl[2];
-                    if (static_cast<size_t>(3) + nameLen > listLen) { p += extDataLen; continue; }
-                    return std::string(reinterpret_cast<const char*>(sl + 3), nameLen);
-                }
-                p += extDataLen;
-            }
-            return std::nullopt;
-        }
-
     } // namespace
 
-    std::optional<std::string> QuicParser::extractInitialSni(const uint8_t* data, size_t size) {
-        // Minimum viable Initial: 1 + 4 + 1 + 0 + 1 + 0 + 1 + 1 + 5 + 16 = ~30 bytes.
-        // Be generous and just require enough for the fixed header bytes we read
-        // before bounds-checking the variable parts.
-        if (!data || size < 20) return std::nullopt;
+    bool QuicParser::looksLikeLongHeader(const uint8_t* data, size_t size) {
+        // Long header (bit 7) + fixed bit (bit 6). Type and packet-number-length
+        // bits are still header-protected, so they cannot be checked yet.
+        if (!data || size < 5) return false;
+        if ((data[0] & 0xC0) != 0xC0) return false;
+        VersionParams unused;
+        return versionParams(readU32(data + 1), unused);
+    }
 
-        // Long header (bit 7 = 1) + fixed bit (bit 6 = 1). Type bits 4-5 and
-        // packet-number-length bits 0-1 are still encrypted by header protection
-        // at this point, so don't check them yet.
+    std::optional<std::string> QuicParser::sniFromClientHello(const uint8_t* data, size_t size) {
+        if (!data || size < 4) return std::nullopt;
+        if (data[0] != 0x01) return std::nullopt; // not ClientHello
+        const size_t bodyLen = (static_cast<size_t>(data[1]) << 16)
+                             | (static_cast<size_t>(data[2]) << 8)
+                             |  static_cast<size_t>(data[3]);
+        if (4 + bodyLen > size) return std::nullopt; // still reassembling
+        const uint8_t* body = data + 4;
+        size_t pos = 0;
+
+        // legacy_version (2) + random (32)
+        if (pos + 34 > bodyLen) return std::nullopt;
+        pos += 34;
+
+        // session_id<0..32>
+        if (pos + 1 > bodyLen) return std::nullopt;
+        const uint8_t sidLen = body[pos++];
+        if (pos + sidLen > bodyLen) return std::nullopt;
+        pos += sidLen;
+
+        // cipher_suites<2..2^16-2>
+        if (pos + 2 > bodyLen) return std::nullopt;
+        const uint16_t csLen = (static_cast<uint16_t>(body[pos]) << 8) | body[pos + 1];
+        pos += 2;
+        if (pos + csLen > bodyLen) return std::nullopt;
+        pos += csLen;
+
+        // legacy_compression_methods<1..2^8-1>
+        if (pos + 1 > bodyLen) return std::nullopt;
+        const uint8_t compLen = body[pos++];
+        if (pos + compLen > bodyLen) return std::nullopt;
+        pos += compLen;
+
+        // extensions<8..2^16-1>
+        if (pos + 2 > bodyLen) return std::nullopt;
+        const uint16_t extLen = (static_cast<uint16_t>(body[pos]) << 8) | body[pos + 1];
+        pos += 2;
+        if (pos + extLen > bodyLen) return std::nullopt;
+        const uint8_t* p   = body + pos;
+        const uint8_t* end = p + extLen;
+
+        while (p + 4 <= end) {
+            const uint16_t extType = (static_cast<uint16_t>(p[0]) << 8) | p[1];
+            const uint16_t extDataLen = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+            p += 4;
+            if (p + extDataLen > end) return std::nullopt;
+
+            if (extType == 0x0000) { // server_name (RFC 6066)
+                if (extDataLen < 5) { p += extDataLen; continue; }
+                const uint16_t listLen = (static_cast<uint16_t>(p[0]) << 8) | p[1];
+                if (static_cast<size_t>(listLen) + 2 > extDataLen) { p += extDataLen; continue; }
+                const uint8_t* sl = p + 2;
+                if (listLen < 3) { p += extDataLen; continue; }
+                const uint8_t nameType = sl[0];
+                if (nameType != 0x00) { p += extDataLen; continue; } // host_name
+                const uint16_t nameLen = (static_cast<uint16_t>(sl[1]) << 8) | sl[2];
+                if (static_cast<size_t>(3) + nameLen > listLen) { p += extDataLen; continue; }
+                return std::string(reinterpret_cast<const char*>(sl + 3), nameLen);
+            }
+            p += extDataLen;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<QuicParser::InitialPacket> QuicParser::parseInitial(const uint8_t* data, size_t size) {
+        if (!data || size < 20) return std::nullopt;
         if ((data[0] & 0xC0) != 0xC0) return std::nullopt;
 
-        // Version 1 (QUIC v1, RFC 9000).
-        const uint32_t version = (static_cast<uint32_t>(data[1]) << 24)
-                               | (static_cast<uint32_t>(data[2]) << 16)
-                               | (static_cast<uint32_t>(data[3]) << 8)
-                               |  static_cast<uint32_t>(data[4]);
-        if (version != 0x00000001) return std::nullopt;
+        const uint32_t version = readU32(data + 1);
+        VersionParams params{};
+        if (!versionParams(version, params)) return std::nullopt;
 
         size_t pos = 5;
         if (pos >= size) return std::nullopt;
@@ -313,7 +358,7 @@ namespace core {
         const uint8_t* sample = data + pnOffset + 4;
 
         InitialKeys keys;
-        if (!deriveClientInitialKeys(dcid, dcidLen, keys)) return std::nullopt;
+        if (!deriveClientInitialKeys(params, dcid, dcidLen, keys)) return std::nullopt;
 
         uint8_t firstByte = data[0];
         uint8_t pnBytes[4];
@@ -324,8 +369,9 @@ namespace core {
             return std::nullopt;
         }
 
-        // After HP removal, type bits 4-5 must be 00 for an Initial packet.
-        if ((firstByte & 0x30) != 0x00) return std::nullopt;
+        // After HP removal the type bits must identify an Initial. The encoding
+        // differs between v1 (0b00) and v2 (0b01).
+        if ((firstByte & 0x30) != params.initialTypeBits) return std::nullopt;
         if (pnLen == 0 || pnLen > 4) return std::nullopt;
 
         uint64_t packetNumber = 0;
@@ -352,13 +398,31 @@ namespace core {
             return std::nullopt;
         }
 
-        std::vector<uint8_t> tlsStream;
-        if (!reassembleCryptoStream(plaintext.data(), plaintext.size(), tlsStream)) {
+        InitialPacket result;
+        result.destinationConnectionId.assign(dcid, dcid + dcidLen);
+        if (!collectCryptoFrames(plaintext.data(), plaintext.size(), result.crypto)) {
             return std::nullopt;
         }
-        if (tlsStream.empty()) return std::nullopt;
+        return result;
+    }
 
-        return extractSniFromClientHello(tlsStream.data(), tlsStream.size());
+    std::optional<std::string> QuicParser::extractInitialSni(const uint8_t* data, size_t size) {
+        const auto initial = parseInitial(data, size);
+        if (!initial || initial->crypto.empty()) return std::nullopt;
+
+        // Stitch this packet's fragments together; a ClientHello that spills
+        // into further Initials needs QuicTracker instead.
+        size_t end = 0;
+        for (const auto& fragment : initial->crypto) {
+            end = std::max(end, static_cast<size_t>(fragment.offset) + fragment.data.size());
+        }
+        if (end == 0) return std::nullopt;
+
+        std::vector<uint8_t> stream(end, 0);
+        for (const auto& fragment : initial->crypto) {
+            std::memcpy(stream.data() + fragment.offset, fragment.data.data(), fragment.data.size());
+        }
+        return sniFromClientHello(stream.data(), stream.size());
     }
 
 } // namespace core
