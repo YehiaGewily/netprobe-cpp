@@ -3,6 +3,7 @@
 #include "core/QuicParser.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -504,6 +505,22 @@ namespace core {
             }
         }
 
+        bool isHttpMethod(const uint8_t* p, size_t len, size_t& methodLen) {
+            static constexpr std::string_view methods[] = {
+                "GET", "POST", "HEAD", "PUT", "DELETE", "OPTIONS",
+                "PATCH", "TRACE", "CONNECT",
+            };
+            for (std::string_view method : methods) {
+                if (len > method.size() + 1
+                    && std::memcmp(p, method.data(), method.size()) == 0
+                    && p[method.size()] == ' ') {
+                    methodLen = method.size();
+                    return true;
+                }
+            }
+            return false;
+        }
+
     } // namespace
 
     void ProtocolParser::parseTLS(const uint8_t* payload, size_t len, ParsedPacket& outPacket) {
@@ -578,7 +595,65 @@ namespace core {
         }
     }
 
-    std::string ProtocolParser::identifyService(const std::string& sni) {
+    void ProtocolParser::parseHTTP(const uint8_t* payload, size_t len, ParsedPacket& outPacket) {
+        const size_t scanLen = std::min<size_t>(len, 2048);
+
+        const auto lineEnd = [&](size_t from) {
+            for (size_t i = from; i + 1 < scanLen; ++i) {
+                if (payload[i] == '' && payload[i + 1] == '
+') return i;
+            }
+            return scanLen;
+        };
+
+        if (scanLen >= 12 && std::memcmp(payload, "HTTP/1.", 7) == 0) {
+            const size_t end = lineEnd(0);
+            outPacket.info.assign(reinterpret_cast<const char*>(payload), end);
+            if (outPacket.service.empty()) outPacket.service = "HTTP";
+            return;
+        }
+
+        size_t methodLen = 0;
+        if (!isHttpMethod(payload, scanLen, methodLen)) return;
+
+        const size_t requestLineEnd = lineEnd(0);
+        outPacket.info.assign(reinterpret_cast<const char*>(payload),
+            std::min(requestLineEnd, static_cast<size_t>(120)));
+        if (outPacket.service.empty()) outPacket.service = "HTTP";
+
+        size_t pos = requestLineEnd + 2;
+        while (pos < scanLen) {
+            const size_t end = lineEnd(pos);
+            if (end == pos) break;
+            if (end == scanLen) break;
+
+            constexpr std::string_view hostPrefix = "host:";
+            if (end - pos > hostPrefix.size()) {
+                bool isHost = true;
+                for (size_t i = 0; i < hostPrefix.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(payload[pos + i])) != hostPrefix[i]) {
+                        isHost = false;
+                        break;
+                    }
+                }
+                if (isHost) {
+                    size_t valueStart = pos + hostPrefix.size();
+                    while (valueStart < end && payload[valueStart] == ' ') ++valueStart;
+                    if (valueStart < end) {
+                        outPacket.hostname.assign(
+                            reinterpret_cast<const char*>(payload + valueStart), end - valueStart);
+                        if (const std::string named = identifyService(outPacket.hostname); !named.empty()) {
+                            outPacket.service = named;
+                        }
+                    }
+                    return;
+                }
+            }
+            pos = end + 2;
+        }
+    }
+
+    std::string ProtocolParser::identifyService(const std::string& hostname) {
         struct Pattern { std::string_view needle; std::string_view label; };
         static constexpr std::array catalog = std::to_array<Pattern>({
             {"youtube",         "YouTube"},
@@ -673,7 +748,7 @@ namespace core {
             {"proton.me",       "Proton"},
         });
 
-        const std::string lower = toLowerCopy(sni);
+        const std::string lower = toLowerCopy(hostname);
         for (const auto& pat : catalog) {
             if (lower.find(pat.needle) != std::string::npos) return std::string(pat.label);
         }
@@ -706,6 +781,8 @@ namespace core {
             if (parsed.protocol == "TCP") {
                 if (payloadLen >= 5 && payload[0] == 0x16 && payload[1] == 0x03 && payload[2] <= 0x04) {
                     parseTLS(payload, payloadLen, parsed);
+                } else {
+                    parseHTTP(payload, payloadLen, parsed);
                 }
                 classifyTcpPort(parsed.dstPort, parsed);
                 classifyTcpPort(parsed.srcPort, parsed);
