@@ -9,6 +9,8 @@
 #include <string_view>
 
 namespace core {
+    bool ProtocolParser::looksLikeTlsHandshake(const uint8_t* payload, size_t length) { return false; }
+    bool ProtocolParser::parseTlsClientHello(const uint8_t* payload, size_t length, std::string& outSni) { return false; }
     namespace {
         constexpr uint16_t kEthIPv4    = 0x0800;
         constexpr uint16_t kEthARP     = 0x0806;

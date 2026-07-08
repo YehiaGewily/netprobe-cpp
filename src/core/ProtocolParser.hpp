@@ -11,6 +11,8 @@ namespace core {
     class ProtocolParser {
     public:
         static ParsedPacket parse(const PacketData& rawData);
+        static bool looksLikeTlsHandshake(const uint8_t* payload, size_t length);
+        static bool parseTlsClientHello(const uint8_t* payload, size_t length, std::string& outSni);
         static std::string identifyService(const std::string& hostname);
 
     private:
