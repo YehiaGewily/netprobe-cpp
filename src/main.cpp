@@ -40,6 +40,11 @@ int main() {
         engine.startCapture(deviceName);
     };
 
+    gui.onCaptureStopRequested = [&]() {
+        std::cout << "Stopping live capture." << std::endl;
+        engine.stopCapture();
+    };
+
     gui.onPcapFileSelected = [&](std::string path) {
         std::cout << "Loading capture file: " << path << std::endl;
         if (!engine.openFile(path)) {
@@ -59,6 +64,7 @@ int main() {
     if (!devices.empty()) {
         std::cout << "Auto-selecting device: " << devices[0].description << std::endl;
         engine.startCapture(devices[0].name);
+        gui.setCaptureActive(true);
     }
 
     // This blocks until window is closed
