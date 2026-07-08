@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <format>
 #include <string>
 #include <utility>
@@ -70,13 +71,67 @@ namespace ui {
         ImGui::PopStyleColor(2);
     }
 
+    // First-run hero shown until the first packet arrives: tells the user how
+    // to get traffic on screen instead of presenting empty charts and tables.
+    void GuiLayer::renderEmptyState() {
+        const auto textCentered = [](const std::string& text, const ImVec4& color) {
+            const float w = ImGui::CalcTextSize(text.c_str()).x;
+            ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowSize().x - w) * 0.5f));
+            ImGui::TextColored(color, "%s", text.c_str());
+        };
+
+        ImGui::Dummy(ImVec2(0, ImGui::GetContentRegionAvail().y * 0.24f));
+
+        if (m_fontHeadline) ImGui::PushFont(m_fontHeadline);
+        textCentered("Waiting for traffic", kText1);
+        if (m_fontHeadline) ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 4));
+
+        if (m_captureActive) {
+            textCentered(m_devices.empty()
+                ? "Capture is running."
+                : std::format("Listening on {}.", m_devices[m_selectedDeviceIndex].description),
+                kText2);
+            textCentered("If nothing appears, live capture may need elevated privileges.", kText3);
+        } else {
+            textCentered("Live capture is stopped. Press Start in the toolbar to begin.", kText2);
+        }
+        ImGui::Dummy(ImVec2(0, 6));
+        textCentered("You can also drop a .pcap / .pcapng file anywhere in this window.", kText3);
+        ImGui::Dummy(ImVec2(0, 14));
+
+        // Centered action buttons.
+        const bool sampleAvailable = std::filesystem::exists("data/sample.pcap");
+        const float openW = 130.0f;
+        const float sampleW = sampleAvailable ? 180.0f : 0.0f;
+        const float totalW = openW + (sampleAvailable ? sampleW + 10.0f : 0.0f);
+        ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowSize().x - totalW) * 0.5f));
+        ImGui::BeginDisabled(!m_nfdInitialized);
+        if (ImGui::Button("Open PCAP...", ImVec2(openW, 0))) {
+            openPcapDialog();
+        }
+        ImGui::EndDisabled();
+        if (sampleAvailable) {
+            ImGui::SameLine(0.0f, 10.0f);
+            if (ImGui::Button("Open bundled sample", ImVec2(sampleW, 0))) {
+                openPcapFile("data/sample.pcap");
+            }
+        }
+    }
+
     void GuiLayer::renderCharts() {
         ImGui::Begin("Dashboard");
+
+        if (m_totalPackets == 0) {
+            renderEmptyState();
+            ImGui::End();
+            return;
+        }
 
         renderKpiStrip();
         ImGui::Dummy(ImVec2(0, 8));
 
-        // Bandwidth chart — minimal axes, filled area, single accent.
+        // Bandwidth chart — minimal axes, filled total, TCP/UDP overlay lines.
         ImGui::PushStyleColor(ImGuiCol_ChildBg, kBgSurface);
         ImGui::PushStyleColor(ImGuiCol_Border, kBorderSoft);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
@@ -98,39 +153,42 @@ namespace ui {
             ImGui::Dummy(ImVec2(0, 4));
 
             if (ImPlot::BeginPlot("##bandwidth", ImVec2(-1, -1),
-                    ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoLegend |
+                    ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText |
                     ImPlotFlags_NoBoxSelect | ImPlotFlags_NoFrame)) {
                 ImPlot::SetupAxes(nullptr, nullptr,
                     ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_AutoFit,
                     ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_AutoFit);
                 ImPlot::SetupAxisLimits(ImAxis_X1, glfwGetTime() - 60.0, glfwGetTime(), ImGuiCond_Always);
+                ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_NoButtons);
 
-                if (!m_bandwidthData.Data.empty()) {
-                    const size_t sampleCount = m_bandwidthData.Data.size();
-                    const size_t start = sampleCount == static_cast<size_t>(m_bandwidthData.MaxSize)
-                        ? static_cast<size_t>(m_bandwidthData.Offset)
-                        : 0;
-                    m_linearBandwidthTime.clear();
-                    m_linearBandwidthData.clear();
-                    m_linearBandwidthTime.reserve(sampleCount);
-                    m_linearBandwidthData.reserve(sampleCount);
-                    for (size_t i = 0; i < sampleCount; ++i) {
-                        const size_t index = (start + i) % sampleCount;
-                        m_linearBandwidthTime.push_back(m_bandwidthData.Time[index]);
-                        m_linearBandwidthData.push_back(m_bandwidthData.Data[index]);
-                    }
-                    ImPlot::PlotShaded("MB/s",
-                        m_linearBandwidthTime.data(),
-                        m_linearBandwidthData.data(),
-                        static_cast<int>(sampleCount), 0.0,
+                linearizeBuffer(m_bandwidthData, m_scratchTime, m_scratchData);
+                if (!m_scratchData.empty()) {
+                    ImPlot::PlotShaded("Total",
+                        m_scratchTime.data(), m_scratchData.data(),
+                        static_cast<int>(m_scratchData.size()), 0.0,
                         ImPlotSpec(ImPlotProp_FillColor, kAccent,
                                    ImPlotProp_FillAlpha, 0.18f));
-                    ImPlot::PlotLine("MB/s",
-                        m_linearBandwidthTime.data(),
-                        m_linearBandwidthData.data(),
-                        static_cast<int>(sampleCount),
+                    ImPlot::PlotLine("Total",
+                        m_scratchTime.data(), m_scratchData.data(),
+                        static_cast<int>(m_scratchData.size()),
                         ImPlotSpec(ImPlotProp_LineColor, kAccent,
                                    ImPlotProp_LineWeight, 1.75f));
+                }
+                linearizeBuffer(m_tcpBandwidth, m_scratchTime, m_scratchData);
+                if (!m_scratchData.empty()) {
+                    ImPlot::PlotLine("TCP",
+                        m_scratchTime.data(), m_scratchData.data(),
+                        static_cast<int>(m_scratchData.size()),
+                        ImPlotSpec(ImPlotProp_LineColor, protocolColor("TCP"),
+                                   ImPlotProp_LineWeight, 1.25f));
+                }
+                linearizeBuffer(m_udpBandwidth, m_scratchTime, m_scratchData);
+                if (!m_scratchData.empty()) {
+                    ImPlot::PlotLine("UDP",
+                        m_scratchTime.data(), m_scratchData.data(),
+                        static_cast<int>(m_scratchData.size()),
+                        ImPlotSpec(ImPlotProp_LineColor, protocolColor("UDP"),
+                                   ImPlotProp_LineWeight, 1.25f));
                 }
                 ImPlot::EndPlot();
             }
