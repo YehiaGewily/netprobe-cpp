@@ -229,6 +229,8 @@ if(BUILD_TESTING)
         src/core/GeoIPResolver.cpp
         src/core/ProtocolParser.cpp
         src/core/QuicParser.cpp
+        src/core/QuicTracker.cpp
+        src/core/TlsReassembler.cpp
         src/capture/CaptureEngine.cpp
         src/capture/NpcapBackend.cpp
         src/capture/LibpcapBackend.cpp
@@ -282,6 +284,8 @@ if(BUILD_FUZZERS)
             src/core/DNSParser.cpp
             src/core/ProtocolParser.cpp
             src/core/QuicParser.cpp
+            src/core/QuicTracker.cpp
+            src/core/TlsReassembler.cpp
         )
         target_include_directories(NetProbeParserFuzzer PRIVATE
             src
