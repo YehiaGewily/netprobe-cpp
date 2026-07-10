@@ -104,21 +104,151 @@ For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb`
 
 ## Architecture
 
-NetProbe uses a classic **Producer-Consumer** pattern to keep the UI responsive while handling high-throughput traffic.
+NetProbe is built around a bounded **producer-consumer** pipeline. Capture runs on a backend-owned path, while the Dear ImGui frame loop drains packets, enriches them, and updates view models without blocking the capture thread.
 
-- **Capture backend (`src/capture/`)**: an `ICaptureBackend` interface with Npcap (Windows) and libpcap (Linux/macOS) implementations. Runs on a dedicated `std::thread` and pushes `PacketData` into the queue.
-- **PacketQueue (`src/core/PacketQueue.hpp`)**: thread-safe bounded queue (`std::mutex` + `std::condition_variable`). Drop-oldest on overflow so the UI shows fresh traffic; dropped-packet count is surfaced separately.
+**Figure 1: Runtime Component Map**
+
+```mermaid
+flowchart LR
+    user["User actions<br/>adapter, BPF, PCAP, export"] --> gui["GuiLayer<br/>menus, dockspace, controls"]
+
+    subgraph capture["src/capture"]
+        engine["CaptureEngine<br/>thread + session buffer"]
+        backend["ICaptureBackend"]
+        npcap["NpcapBackend<br/>Windows"]
+        libpcap["LibpcapBackend<br/>Linux/macOS"]
+        backend --> npcap
+        backend --> libpcap
+        engine --> backend
+    end
+
+    subgraph core["src/core"]
+        queue["PacketQueue<br/>bounded, drop-oldest"]
+        parser["ProtocolParser<br/>link -> network -> transport -> app"]
+        tls["TlsReassembler"]
+        quic["QuicTracker + QuicParser"]
+        dns["DNSParser + HostnameCache"]
+        flows["FlowAggregator"]
+        geo["GeoIPResolver"]
+        proc["ProcessResolver"]
+    end
+
+    subgraph ui["src/ui views"]
+        dash["Dashboard"]
+        flowView["FlowsView"]
+        packetView["PacketView"]
+        detail["PacketDetail"]
+        stats["StatsView"]
+    end
+
+    gui --> engine
+    engine --> queue
+    queue --> gui
+    gui --> parser
+    parser --> tls
+    parser --> quic
+    parser --> dns
+    dns --> flows
+    parser --> flows
+    flows --> geo
+    flows --> proc
+    gui --> dash
+    gui --> flowView
+    gui --> packetView
+    gui --> detail
+    gui --> stats
+```
+
+**Figure 2: Packet Decode And Enrichment Pipeline**
+
+```mermaid
+flowchart TD
+    packet["PacketData<br/>timestamp + captured bytes"] --> link["LinkType dispatch<br/>Ethernet, VLAN/QinQ, SLL/SLL2,<br/>loopback, raw IP"]
+    link --> net{"Network layer"}
+    net --> ipv4["IPv4<br/>options + fragments metadata"]
+    net --> ipv6["IPv6<br/>extension headers"]
+    net --> arp["ARP"]
+    ipv4 --> tunnel{"Tunnel descent<br/>depth capped"}
+    ipv6 --> tunnel
+    tunnel --> inner["GRE, IP-in-IP, 6in4,<br/>VXLAN, GENEVE, MPLS, PPPoE"]
+    inner --> transport{"Transport"}
+    tunnel --> transport
+    transport --> tcp["TCP"]
+    transport --> udp["UDP"]
+    transport --> other["ICMP, ICMPv6, SCTP,<br/>ESP/WireGuard/OpenVPN labels"]
+    tcp --> tls["TLS ClientHello SNI<br/>single packet or reassembled"]
+    tcp --> http["HTTP request + Host"]
+    udp --> quic["QUIC v1/v2 Initial<br/>decrypt + CRYPTO reassembly"]
+    udp --> dns["DNS/mDNS/LLMNR records"]
+    tls --> parsed["ParsedPacket"]
+    http --> parsed
+    quic --> parsed
+    dns --> parsed
+    other --> parsed
+    parsed --> flow["FlowAggregator<br/>canonical bidirectional key"]
+    dns --> cache["HostnameCache"]
+    cache --> flow
+    flow --> views["Dashboard, Flows,<br/>Packets, Detail, Statistics"]
+```
+
+**Figure 3: Live Capture Control Flow**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant GUI as GuiLayer
+    participant Engine as CaptureEngine
+    participant Backend as Npcap/libpcap backend
+    participant Queue as PacketQueue
+    participant Parser as Parser + aggregators
+    participant Views as ImGui views
+
+    User->>GUI: Select adapter or press Start
+    GUI->>Engine: startCapture(device)
+    Engine->>Backend: open(device)
+    Engine->>Backend: apply active BPF filter
+    Engine->>Engine: spawn captureLoop thread
+    loop backend packets
+        Backend-->>Engine: nextPacket()
+        Engine->>Engine: retain in session buffer
+        Engine->>Queue: push(PacketData)
+    end
+    loop each UI frame
+        GUI->>Queue: try_pop up to 1000 packets
+        GUI->>Parser: parse and recover SNI/DNS names
+        Parser-->>GUI: ParsedPacket + derived metadata
+        GUI->>Views: update history, flows, stats, charts
+    end
+```
+
+**Figure 4: Offline PCAP Path**
+
+```mermaid
+flowchart LR
+    file[".pcap / .pcapng file"] --> open["CaptureEngine::openFile"]
+    open --> backend["pcap offline reader"]
+    backend --> dlt["Snapshot link type<br/>for correct export DLT"]
+    backend --> packets["Read packets until EOF"]
+    packets --> session["Retain recent session packets"]
+    packets --> queue["Push into PacketQueue"]
+    queue --> ui["GuiLayer frame loop"]
+    ui --> same["Same parser, DNS/SNI recovery,<br/>flow aggregation, and views as live mode"]
+```
+
+### Main Modules
+
+- **Capture backend (`src/capture/`)**: `ICaptureBackend` hides the Npcap and libpcap implementations. `CaptureEngine` owns the backend, live capture thread, BPF application, offline reads, and a capped session buffer for PCAP export.
+- **Packet queue (`src/core/PacketQueue.hpp`)**: thread-safe bounded queue (`std::mutex` + `std::condition_variable`). On overflow it drops the oldest packets so the UI stays close to live traffic; the dropped count is surfaced in the control bar.
 - **Protocol stack (`src/core/`)**:
-  - `LinkType` — maps libpcap `DLT_*` values to the encapsulations the parser understands, so a cooked or loopback capture is decoded correctly (or refused) rather than misread as Ethernet.
-  - `ProtocolParser` — link layer → IPv4/IPv6 (with extension headers) → tunnel descent (depth-capped) → TCP/UDP → application DPI (TLS, QUIC, HTTP) and service classification. Stateless.
-  - `TlsReassembler` — buffers ClientHello bytes across in-order TCP segments, with size caps and stream expiry. Stateful; owned by the UI layer.
-  - `QuicParser` — QUIC v1/v2 Initial decryption (mbedTLS): HKDF-SHA256 from DCID → AES-128-ECB for header protection → AES-128-GCM for the payload → CRYPTO-frame extraction → TLS ClientHello SNI.
-  - `QuicTracker` — stitches CRYPTO fragments from multiple Initial packets, keyed by connection id, for ClientHellos too large for one datagram.
-  - `DNSParser` — DNS/mDNS/LLMNR A/AAAA/CNAME/PTR/SRV/TXT/HTTPS-SVCB extraction over IPv4/IPv6 and any link type, feeds `HostnameCache`; flags advertised ECH configs.
-  - `FlowAggregator` — collapses bidirectional flows by a canonical key (both ports included, direction-independent), tracks bytes per direction/rate/duration, and measures the **initial TCP RTT** from the SYN / SYN-ACK timing delta.
-  - `GeoIPResolver` — LRU-cached lookups against GeoLite2 MMDBs.
-  - `ProcessResolver` — endpoint → PID → executable name. Per-OS branches: Windows iphlpapi, Linux `/proc`, macOS `proc_pidfdinfo`.
-- **GUI layer (`src/ui/`)**: Dear ImGui dockspace split across `GuiLayer` (chrome + dockspace + capture controls), `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView`. Consumes the queue each frame, drives the stateful reassemblers, and updates derived metrics.
+  - `LinkType` maps libpcap `DLT_*` values to supported encapsulations, so cooked, loopback, raw-IP, and Ethernet-family captures are decoded intentionally.
+  - `ProtocolParser` is the stateless fast path: link layer -> IPv4/IPv6 -> tunnel descent -> transport -> application hints and service classification.
+  - `TlsReassembler` buffers split TCP ClientHellos with size and expiry caps; it is owned by the UI layer because it is stream state.
+  - `QuicParser` decrypts QUIC v1/v2 Initial packets with mbedTLS and extracts TLS ClientHello data from CRYPTO frames.
+  - `QuicTracker` stitches CRYPTO fragments across multiple Initial packets, keyed by connection id.
+  - `DNSParser` extracts DNS/mDNS/LLMNR answers, feeds `HostnameCache`, and flags advertised ECH configs.
+  - `FlowAggregator` collapses both directions of a conversation into one canonical key, tracks rates and byte totals, and measures initial TCP RTT from SYN/SYN-ACK timing.
+  - `GeoIPResolver` and `ProcessResolver` add country/ASN and process ownership where platform data is available.
+- **GUI layer (`src/ui/`)**: `GuiLayer` owns the Dear ImGui dockspace, capture controls, settings, queue drain, stateful reassemblers, DNS name cache, flow aggregator, and bounded packet history. `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView` render those derived models.
 
 ## Quality
 
@@ -135,5 +265,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License.
-
 
