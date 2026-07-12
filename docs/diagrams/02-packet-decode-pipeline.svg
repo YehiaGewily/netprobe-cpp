@@ -1,0 +1,50 @@
+<svg width="680" height="470" viewBox="0 0 680 470" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>NetProbe packet decode and enrichment pipeline</title>
+<desc>Captured bytes flow down through link-layer dispatch, network layer, depth-capped tunnel descent, transport, and application identification, converging into a parsed packet, flow aggregation, and the views.</desc>
+<style>
+text{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif}
+.t{font-size:14px;fill:#14212e}
+.ts{font-size:12px;fill:#5B6472}
+.th{font-size:14px;font-weight:500;fill:#14212e}
+.hd{font-size:16px;font-weight:600;fill:#14212e}
+.arr{stroke:#7A8593;stroke-width:1.5;fill:none}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#7A8593" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="680" height="470" rx="12" fill="#ffffff" stroke="#E4E7EC"/>
+
+<text class="hd" x="24" y="30">NetProbe — packet decode pipeline</text>
+
+<g><rect x="240" y="42" width="200" height="42" rx="7" fill="#EEF0F2" stroke="#98A2B0"/><text class="th" x="340" y="61" text-anchor="middle">PacketData</text><text class="ts" x="340" y="76" text-anchor="middle">timestamp + captured bytes</text></g>
+
+<g><rect x="200" y="104" width="280" height="42" rx="7" fill="#E6F1FB" stroke="#2A6FB0"/><text class="th" x="340" y="123" text-anchor="middle">Link-layer dispatch</text><text class="ts" x="340" y="138" text-anchor="middle">Ethernet · VLAN/QinQ · SLL · loopback · raw IP</text></g>
+
+<g><rect x="120" y="166" width="150" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="195" y="185" text-anchor="middle">IPv4 · IPv6</text><text class="ts" x="195" y="200" text-anchor="middle">options + ext headers</text></g>
+<g><rect x="410" y="166" width="150" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="485" y="191" text-anchor="middle">ARP</text></g>
+
+<g><rect x="120" y="228" width="440" height="42" rx="7" fill="#FCF0DA" stroke="#C98A1B"/><text class="th" x="340" y="247" text-anchor="middle">Tunnel descent · depth-capped</text><text class="ts" x="340" y="262" text-anchor="middle">GRE · IP-in-IP · 6in4 · VXLAN · GENEVE · MPLS · PPPoE</text></g>
+
+<g><rect x="60" y="290" width="150" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="135" y="315" text-anchor="middle">TCP</text></g>
+<g><rect x="265" y="290" width="150" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="340" y="315" text-anchor="middle">UDP</text></g>
+<g><rect x="470" y="290" width="150" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="545" y="309" text-anchor="middle">ICMP · SCTP</text><text class="ts" x="545" y="324" text-anchor="middle">ESP/VPN labels</text></g>
+
+<g><rect x="60" y="352" width="150" height="42" rx="7" fill="#E4F4E4" stroke="#4CAF50"/><text class="th" x="135" y="371" text-anchor="middle">TLS SNI · HTTP</text><text class="ts" x="135" y="386" text-anchor="middle">segment reassembly</text></g>
+<g><rect x="265" y="352" width="150" height="42" rx="7" fill="#E4F4E4" stroke="#4CAF50"/><text class="th" x="340" y="371" text-anchor="middle">QUIC v1/v2</text><text class="ts" x="340" y="386" text-anchor="middle">decrypt + CRYPTO join</text></g>
+<g><rect x="470" y="352" width="150" height="42" rx="7" fill="#E4F4E4" stroke="#4CAF50"/><text class="th" x="545" y="371" text-anchor="middle">DNS · mDNS</text><text class="ts" x="545" y="386" text-anchor="middle">feeds HostnameCache</text></g>
+
+<g><rect x="200" y="414" width="280" height="42" rx="7" fill="#EEF0F2" stroke="#98A2B0"/><text class="th" x="340" y="433" text-anchor="middle">ParsedPacket → FlowAggregator</text><text class="ts" x="340" y="448" text-anchor="middle">canonical bidirectional key → views</text></g>
+
+<line class="arr" x1="340" y1="84" x2="340" y2="102" marker-end="url(#arrow)"/>
+<line class="arr" x1="300" y1="146" x2="220" y2="164" marker-end="url(#arrow)"/>
+<line class="arr" x1="380" y1="146" x2="460" y2="164" marker-end="url(#arrow)"/>
+<line class="arr" x1="220" y1="208" x2="300" y2="226" marker-end="url(#arrow)"/>
+<line class="arr" x1="460" y1="208" x2="380" y2="226" marker-end="url(#arrow)"/>
+<line class="arr" x1="280" y1="270" x2="150" y2="288" marker-end="url(#arrow)"/>
+<line class="arr" x1="340" y1="270" x2="340" y2="288" marker-end="url(#arrow)"/>
+<line class="arr" x1="400" y1="270" x2="530" y2="288" marker-end="url(#arrow)"/>
+<line class="arr" x1="135" y1="332" x2="135" y2="350" marker-end="url(#arrow)"/>
+<line class="arr" x1="340" y1="332" x2="340" y2="350" marker-end="url(#arrow)"/>
+<line class="arr" x1="545" y1="332" x2="545" y2="350" marker-end="url(#arrow)"/>
+<line class="arr" x1="135" y1="394" x2="250" y2="412" marker-end="url(#arrow)"/>
+<line class="arr" x1="340" y1="394" x2="340" y2="412" marker-end="url(#arrow)"/>
+<line class="arr" x1="545" y1="394" x2="430" y2="412" marker-end="url(#arrow)"/>
+</svg>
