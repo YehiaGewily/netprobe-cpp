@@ -34,6 +34,10 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 
 ## Tech Stack
 
+<p align="center">
+  <img src="docs/diagrams/05-tech-stack.svg" alt="NetProbe technology stack: C++20 core surrounded by its FetchContent-pinned dependencies" width="760">
+</p>
+
 - **Language**: C++20
 - **Packet Capture**: [Npcap SDK](https://npcap.com/) (Windows) / libpcap (Linux/macOS)
 - **UI Framework**: [Dear ImGui](https://github.com/ocornut/imgui) + [GLFW](https://www.glfw.org/) with docking
@@ -106,120 +110,27 @@ For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb`
 
 NetProbe is built around a bounded **producer-consumer** pipeline. Capture runs on a backend-owned path, while the Dear ImGui frame loop drains packets, enriches them, and updates view models without blocking the capture thread.
 
+<p align="center">
+  <img src="docs/diagrams/04-producer-consumer-threads.svg" alt="Producer-consumer threading: capture thread pushes into a bounded queue, UI thread drains it" width="720">
+</p>
+
 **Figure 1: Runtime Component Map**
 
-```mermaid
-flowchart LR
-    user["User actions<br/>adapter, BPF, PCAP, export"] --> gui["GuiLayer<br/>menus, dockspace, controls"]
-
-    subgraph capture["src/capture"]
-        engine["CaptureEngine<br/>thread + session buffer"]
-        backend["ICaptureBackend"]
-        npcap["NpcapBackend<br/>Windows"]
-        libpcap["LibpcapBackend<br/>Linux/macOS"]
-        backend --> npcap
-        backend --> libpcap
-        engine --> backend
-    end
-
-    subgraph core["src/core"]
-        queue["PacketQueue<br/>bounded, drop-oldest"]
-        parser["ProtocolParser<br/>link -> network -> transport -> app"]
-        tls["TlsReassembler"]
-        quic["QuicTracker + QuicParser"]
-        dns["DNSParser + HostnameCache"]
-        flows["FlowAggregator"]
-        geo["GeoIPResolver"]
-        proc["ProcessResolver"]
-    end
-
-    subgraph ui["src/ui views"]
-        dash["Dashboard"]
-        flowView["FlowsView"]
-        packetView["PacketView"]
-        detail["PacketDetail"]
-        stats["StatsView"]
-    end
-
-    gui --> engine
-    engine --> queue
-    queue --> gui
-    gui --> parser
-    parser --> tls
-    parser --> quic
-    parser --> dns
-    dns --> flows
-    parser --> flows
-    flows --> geo
-    flows --> proc
-    gui --> dash
-    gui --> flowView
-    gui --> packetView
-    gui --> detail
-    gui --> stats
-```
+<p align="center">
+  <img src="docs/diagrams/01-runtime-architecture.svg" alt="NetProbe runtime architecture: capture, core, and UI layers" width="760">
+</p>
 
 **Figure 2: Packet Decode And Enrichment Pipeline**
 
-```mermaid
-flowchart TD
-    packet["PacketData<br/>timestamp + captured bytes"] --> link["LinkType dispatch<br/>Ethernet, VLAN/QinQ, SLL/SLL2,<br/>loopback, raw IP"]
-    link --> net{"Network layer"}
-    net --> ipv4["IPv4<br/>options + fragments metadata"]
-    net --> ipv6["IPv6<br/>extension headers"]
-    net --> arp["ARP"]
-    ipv4 --> tunnel{"Tunnel descent<br/>depth capped"}
-    ipv6 --> tunnel
-    tunnel --> inner["GRE, IP-in-IP, 6in4,<br/>VXLAN, GENEVE, MPLS, PPPoE"]
-    inner --> transport{"Transport"}
-    tunnel --> transport
-    transport --> tcp["TCP"]
-    transport --> udp["UDP"]
-    transport --> other["ICMP, ICMPv6, SCTP,<br/>ESP/WireGuard/OpenVPN labels"]
-    tcp --> tls["TLS ClientHello SNI<br/>single packet or reassembled"]
-    tcp --> http["HTTP request + Host"]
-    udp --> quic["QUIC v1/v2 Initial<br/>decrypt + CRYPTO reassembly"]
-    udp --> dns["DNS/mDNS/LLMNR records"]
-    tls --> parsed["ParsedPacket"]
-    http --> parsed
-    quic --> parsed
-    dns --> parsed
-    other --> parsed
-    parsed --> flow["FlowAggregator<br/>canonical bidirectional key"]
-    dns --> cache["HostnameCache"]
-    cache --> flow
-    flow --> views["Dashboard, Flows,<br/>Packets, Detail, Statistics"]
-```
+<p align="center">
+  <img src="docs/diagrams/02-packet-decode-pipeline.svg" alt="Packet decode pipeline: link, network, tunnel, transport, and application layers converging into flows" width="760">
+</p>
 
 **Figure 3: Live Capture Control Flow**
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant GUI as GuiLayer
-    participant Engine as CaptureEngine
-    participant Backend as Npcap/libpcap backend
-    participant Queue as PacketQueue
-    participant Parser as Parser + aggregators
-    participant Views as ImGui views
-
-    User->>GUI: Select adapter or press Start
-    GUI->>Engine: startCapture(device)
-    Engine->>Backend: open(device)
-    Engine->>Backend: apply active BPF filter
-    Engine->>Engine: spawn captureLoop thread
-    loop backend packets
-        Backend-->>Engine: nextPacket()
-        Engine->>Engine: retain in session buffer
-        Engine->>Queue: push(PacketData)
-    end
-    loop each UI frame
-        GUI->>Queue: try_pop up to 1000 packets
-        GUI->>Parser: parse and recover SNI/DNS names
-        Parser-->>GUI: ParsedPacket + derived metadata
-        GUI->>Views: update history, flows, stats, charts
-    end
-```
+<p align="center">
+  <img src="docs/diagrams/03-live-capture-sequence.svg" alt="Live capture sequence: user starts capture, engine opens device and spawns a thread, queue feeds the UI frame loop" width="760">
+</p>
 
 **Figure 4: Offline PCAP Path**
 
