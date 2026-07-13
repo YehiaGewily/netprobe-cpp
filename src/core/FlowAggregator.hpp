@@ -38,6 +38,10 @@ namespace core {
         int64_t lastSeen = 0;
         std::string hostname;
         std::string service;
+        // Local process that owns this flow's socket, resolved once while the
+        // connection was still live (see ProcessResolver). Empty when the flow
+        // isn't local, the socket had already closed, or the lookup failed.
+        std::string process;
         double rateBytesPerSecond = 0.0;
         // Initial TCP RTT, in microseconds. Computed once when both the
         // outgoing SYN and the matching SYN-ACK have been observed; 0 means
@@ -58,7 +62,8 @@ namespace core {
         // `src` endpoint — i.e. server to client for ordinary traffic.
         static bool isDownstream(const ParsedPacket& packet, const FlowKey& key);
 
-        void update(const ParsedPacket& packet, const std::string& hostname = {});
+        void update(const ParsedPacket& packet, const std::string& hostname = {},
+                    const std::string& process = {});
         void setHostnameForAddress(const std::string& ip, const std::string& hostname);
         std::vector<Flow> snapshot(int64_t nowMicroseconds) const;
         void clear();

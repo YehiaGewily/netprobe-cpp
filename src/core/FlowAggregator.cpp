@@ -80,7 +80,8 @@ namespace core {
         return packet.srcIP == key.dstIP && packet.srcPort == key.dstPort;
     }
 
-    void FlowAggregator::update(const ParsedPacket& packet, const std::string& hostname) {
+    void FlowAggregator::update(const ParsedPacket& packet, const std::string& hostname,
+                                const std::string& process) {
         const auto key = keyFor(packet);
         if (!key) return;
 
@@ -118,6 +119,9 @@ namespace core {
         if (!packet.sni.empty()) state.flow.hostname = packet.sni;
         else if (!packet.hostname.empty()) state.flow.hostname = packet.hostname;
         if (!packet.service.empty()) state.flow.service = packet.service;
+        // Keep the first non-empty resolution: the owning process is stable for
+        // a flow's lifetime, and the socket may close before the flow ages out.
+        if (state.flow.process.empty() && !process.empty()) state.flow.process = process;
 
         state.recentTraffic.push_back({packet.timestamp, packet.length});
         const int64_t cutoff = packet.timestamp - oneSecondInMicroseconds;
