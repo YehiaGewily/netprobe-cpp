@@ -405,7 +405,10 @@ namespace ui {
             } else if (const auto sourceHostname = m_hostnameCache.lookup(parsed.srcIP)) {
                 hostname = *sourceHostname;
             }
-            m_flowAggregator.update(parsed, hostname);
+            // Resolve the owning process now, while the socket is almost
+            // certainly still in the OS table; the flow caches it so the name
+            // survives after a short-lived connection closes.
+            m_flowAggregator.update(parsed, hostname, m_processResolver.lookup(parsed));
 
             // Keep the visual history bounded while retaining all-time counters separately.
             if (m_packetHistory.size() >= maxPacketHistory) {

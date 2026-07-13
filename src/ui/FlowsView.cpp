@@ -61,7 +61,7 @@ namespace ui {
             error = "Unable to open the destination file for writing.";
             return false;
         }
-        file << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,country,organization,"
+        file << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,process,country,organization,"
                 "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec\n";
         for (const auto& flow : flows) {
             const auto geo = m_geoIPResolver.lookup(flow.key.dstIP);
@@ -77,6 +77,7 @@ namespace ui {
                  << flow.key.dstPort << ','
                  << flow.key.protocol << ','
                  << csvEscape(flow.service) << ','
+                 << csvEscape(flow.process) << ','
                  << csvEscape(geo.country) << ','
                  << csvEscape(organizationLabelFor(geo)) << ','
                  << flow.packets << ','
@@ -128,6 +129,7 @@ namespace ui {
             detailRow("Endpoints", std::format("{}:{}  ->  {}:{}",
                 flow.key.srcIP, flow.key.srcPort, flow.key.dstIP, flow.key.dstPort));
             detailRow("Protocol", flow.key.protocol);
+            detailRow("Process", flow.process);
             detailRow("Country", geo.country.empty() ? "-" : geo.country);
             detailRow("Org", organizationLabelFor(geo));
             // Name the direction by its endpoint rather than "up"/"down": for a
@@ -236,7 +238,7 @@ namespace ui {
             | ImGuiTableFlags_Resizable
             | ImGuiTableFlags_Sortable;
 
-        if (ImGui::BeginTable("FlowsTable", 10, tableFlags)) {
+        if (ImGui::BeginTable("FlowsTable", 11, tableFlags)) {
             ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, 65.0f);
             ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, 180.0f);
@@ -247,6 +249,7 @@ namespace ui {
             ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, 90.0f);
             ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 85.0f);
             ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs(); sortSpecs && sortSpecs->SpecsDirty) {
@@ -289,6 +292,7 @@ namespace ui {
                 }
                 case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
                     : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
+                case 10: comparison = left.process.compare(right.process); break;
                 default: break;
                 }
                 if (comparison == 0) comparison = leftHost.compare(rightHost);
@@ -384,6 +388,15 @@ namespace ui {
                     ImGui::TableSetColumnIndex(9);
                     const std::string duration = formatDuration(flow.firstSeen, flow.lastSeen);
                     ImGui::TextUnformatted(duration.c_str());
+                    ImGui::TableSetColumnIndex(10);
+                    if (flow.process.empty()) {
+                        ImGui::TextDisabled("--");
+                    } else {
+                        ImGui::TextColored(kText1, "%s", flow.process.c_str());
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                            ImGui::SetTooltip("%s", flow.process.c_str());
+                        }
+                    }
                     ImGui::PopID();
                 }
             }
