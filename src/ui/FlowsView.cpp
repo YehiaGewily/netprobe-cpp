@@ -94,6 +94,80 @@ namespace ui {
         return true;
     }
 
+    // Refresh the shared flow snapshot on a 0.5s cadence. Copying every flow,
+    // resolving GeoIP, and sorting were previously done per frame in both the
+    // Flows and Statistics views; at high flow counts that dominated the frame.
+    void GuiLayer::refreshFlowsCache() {
+        const double now = glfwGetTime();
+        if (m_lastFlowsRefresh >= 0.0 && now - m_lastFlowsRefresh < 0.5) return;
+        m_lastFlowsRefresh = now;
+
+        m_flowsCache = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+        m_activeFlowCount = m_flowsCache.size();
+
+        // The geo cache persists across refreshes so each destination IP is
+        // resolved once; keep it from growing without bound on long captures.
+        if (m_flowGeoCache.size() > 8192) m_flowGeoCache.clear();
+        m_maxFlowBytes = 0;
+        for (const auto& flow : m_flowsCache) {
+            if (!m_flowGeoCache.contains(flow.key.dstIP)) {
+                m_flowGeoCache.emplace(flow.key.dstIP, m_geoIPResolver.lookup(flow.key.dstIP));
+            }
+            m_maxFlowBytes = std::max<uint64_t>(m_maxFlowBytes, flow.bytesUp + flow.bytesDown);
+        }
+        m_flowSortDirty = true;
+    }
+
+    void GuiLayer::sortFlowsCache() {
+        m_flowSortDirty = false;
+        static const core::GeoIPInfo kNoGeo{};
+        const auto geoFor = [this](const std::string& ip) -> const core::GeoIPInfo& {
+            const auto it = m_flowGeoCache.find(ip);
+            return it == m_flowGeoCache.end() ? kNoGeo : it->second;
+        };
+        const auto compareFlows = [this, &geoFor](const core::Flow& left, const core::Flow& right) {
+            const std::string& leftHost = left.hostname.empty() ? left.key.dstIP : left.hostname;
+            const std::string& rightHost = right.hostname.empty() ? right.key.dstIP : right.hostname;
+            const auto& leftGeo = geoFor(left.key.dstIP);
+            const auto& rightGeo = geoFor(right.key.dstIP);
+            const std::string leftCountry = leftGeo.country.empty() ? "-" : leftGeo.country;
+            const std::string rightCountry = rightGeo.country.empty() ? "-" : rightGeo.country;
+            const std::string leftOrganization = organizationLabelFor(leftGeo);
+            const std::string rightOrganization = organizationLabelFor(rightGeo);
+            const uint64_t leftBytes = left.bytesUp + left.bytesDown;
+            const uint64_t rightBytes = right.bytesUp + right.bytesDown;
+
+            int comparison = 0;
+            switch (m_flowSortColumn) {
+            case 0: comparison = leftHost.compare(rightHost); break;
+            case 1: comparison = leftCountry.compare(rightCountry); break;
+            case 2: comparison = leftOrganization.compare(rightOrganization); break;
+            case 3: comparison = left.service.compare(right.service); break;
+            case 4: comparison = std::tie(left.key.protocol, left.key.dstPort) < std::tie(right.key.protocol, right.key.dstPort) ? -1
+                : std::tie(right.key.protocol, right.key.dstPort) < std::tie(left.key.protocol, left.key.dstPort) ? 1 : 0; break;
+            case 5: comparison = left.packets < right.packets ? -1 : left.packets > right.packets ? 1 : 0; break;
+            case 6: comparison = leftBytes < rightBytes ? -1 : leftBytes > rightBytes ? 1 : 0; break;
+            case 7: comparison = left.rateBytesPerSecond < right.rateBytesPerSecond ? -1
+                : left.rateBytesPerSecond > right.rateBytesPerSecond ? 1 : 0; break;
+            case 8: {
+                // Unknown RTT (0) sorts to the bottom regardless of direction
+                // so flows with measurements always cluster at the top.
+                const int64_t lr = left.initialRttMicroseconds == 0 ? INT64_MAX : left.initialRttMicroseconds;
+                const int64_t rr = right.initialRttMicroseconds == 0 ? INT64_MAX : right.initialRttMicroseconds;
+                comparison = lr < rr ? -1 : lr > rr ? 1 : 0;
+                break;
+            }
+            case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
+                : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
+            case 10: comparison = left.process.compare(right.process); break;
+            default: break;
+            }
+            if (comparison == 0) comparison = leftHost.compare(rightHost);
+            return m_flowSortAscending ? comparison < 0 : comparison > 0;
+        };
+        std::sort(m_flowsCache.begin(), m_flowsCache.end(), compareFlows);
+    }
+
     void GuiLayer::renderFlowDetail(const core::Flow& flow, const core::GeoIPInfo& geo) {
         const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
 
@@ -186,23 +260,19 @@ namespace ui {
     void GuiLayer::renderFlowsTable() {
         ImGui::Begin("Flows");
 
-        auto flows = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
-        m_activeFlowCount = flows.size();
-        std::unordered_map<std::string, core::GeoIPInfo> geoInfoByIp;
-        uint64_t maxFlowBytes = 0;
-        for (const auto& flow : flows) {
-            if (!geoInfoByIp.contains(flow.key.dstIP)) {
-                geoInfoByIp.emplace(flow.key.dstIP, m_geoIPResolver.lookup(flow.key.dstIP));
-            }
-            maxFlowBytes = std::max<uint64_t>(maxFlowBytes, flow.bytesUp + flow.bytesDown);
-        }
+        refreshFlowsCache();
+        static const core::GeoIPInfo kNoGeo{};
+        const auto geoFor = [this](const std::string& ip) -> const core::GeoIPInfo& {
+            const auto it = m_flowGeoCache.find(ip);
+            return it == m_flowGeoCache.end() ? kNoGeo : it->second;
+        };
 
         // Locate the selected flow (if any) and keep its rate history sampled
         // so the detail pane can draw a sparkline. Copied by value because the
-        // flows vector is re-sorted below.
+        // cached flows vector may be re-sorted below.
         std::optional<core::Flow> selectedFlow;
         if (m_packetFlowFilter) {
-            for (const auto& flow : flows) {
+            for (const auto& flow : m_flowsCache) {
                 if (flow.key == *m_packetFlowFilter) { selectedFlow = flow; break; }
             }
         }
@@ -256,57 +326,17 @@ namespace ui {
                 m_flowSortColumn = sortSpecs->Specs[0].ColumnIndex;
                 m_flowSortAscending = sortSpecs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
                 sortSpecs->SpecsDirty = false;
+                m_flowSortDirty = true;
             }
-
-            const auto compareFlows = [this, &geoInfoByIp](const core::Flow& left, const core::Flow& right) {
-                const std::string& leftHost = left.hostname.empty() ? left.key.dstIP : left.hostname;
-                const std::string& rightHost = right.hostname.empty() ? right.key.dstIP : right.hostname;
-                const auto& leftGeo = geoInfoByIp.at(left.key.dstIP);
-                const auto& rightGeo = geoInfoByIp.at(right.key.dstIP);
-                const std::string leftCountry = leftGeo.country.empty() ? "-" : leftGeo.country;
-                const std::string rightCountry = rightGeo.country.empty() ? "-" : rightGeo.country;
-                const std::string leftOrganization = organizationLabelFor(leftGeo);
-                const std::string rightOrganization = organizationLabelFor(rightGeo);
-                const uint64_t leftBytes = left.bytesUp + left.bytesDown;
-                const uint64_t rightBytes = right.bytesUp + right.bytesDown;
-
-                int comparison = 0;
-                switch (m_flowSortColumn) {
-                case 0: comparison = leftHost.compare(rightHost); break;
-                case 1: comparison = leftCountry.compare(rightCountry); break;
-                case 2: comparison = leftOrganization.compare(rightOrganization); break;
-                case 3: comparison = left.service.compare(right.service); break;
-                case 4: comparison = std::tie(left.key.protocol, left.key.dstPort) < std::tie(right.key.protocol, right.key.dstPort) ? -1
-                    : std::tie(right.key.protocol, right.key.dstPort) < std::tie(left.key.protocol, left.key.dstPort) ? 1 : 0; break;
-                case 5: comparison = left.packets < right.packets ? -1 : left.packets > right.packets ? 1 : 0; break;
-                case 6: comparison = leftBytes < rightBytes ? -1 : leftBytes > rightBytes ? 1 : 0; break;
-                case 7: comparison = left.rateBytesPerSecond < right.rateBytesPerSecond ? -1
-                    : left.rateBytesPerSecond > right.rateBytesPerSecond ? 1 : 0; break;
-                case 8: {
-                    // Unknown RTT (0) sorts to the bottom regardless of direction
-                    // so flows with measurements always cluster at the top.
-                    const int64_t lr = left.initialRttMicroseconds == 0 ? INT64_MAX : left.initialRttMicroseconds;
-                    const int64_t rr = right.initialRttMicroseconds == 0 ? INT64_MAX : right.initialRttMicroseconds;
-                    comparison = lr < rr ? -1 : lr > rr ? 1 : 0;
-                    break;
-                }
-                case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
-                    : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
-                case 10: comparison = left.process.compare(right.process); break;
-                default: break;
-                }
-                if (comparison == 0) comparison = leftHost.compare(rightHost);
-                return m_flowSortAscending ? comparison < 0 : comparison > 0;
-            };
-            std::sort(flows.begin(), flows.end(), compareFlows);
+            if (m_flowSortDirty) sortFlowsCache();
 
             ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(flows.size()));
+            clipper.Begin(static_cast<int>(m_flowsCache.size()));
             while (clipper.Step()) {
                 for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
-                    const auto& flow = flows[static_cast<size_t>(index)];
+                    const auto& flow = m_flowsCache[static_cast<size_t>(index)];
                     const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
-                    const auto& geoInfo = geoInfoByIp.at(flow.key.dstIP);
+                    const auto& geoInfo = geoFor(flow.key.dstIP);
                     const std::string country = geoInfo.country.empty() ? "-" : geoInfo.country;
                     const std::string organization = organizationLabelFor(geoInfo);
                     const uint64_t totalBytes = flow.bytesUp + flow.bytesDown;
@@ -355,9 +385,9 @@ namespace ui {
                         const ImVec2 cellMin = ImGui::GetCursorScreenPos();
                         const float cellW = ImGui::GetContentRegionAvail().x;
                         const float barH = 4.0f;
-                        const float fraction = maxFlowBytes == 0
+                        const float fraction = m_maxFlowBytes == 0
                             ? 0.0f
-                            : static_cast<float>(totalBytes) / static_cast<float>(maxFlowBytes);
+                            : static_cast<float>(totalBytes) / static_cast<float>(m_maxFlowBytes);
                         ImDrawList* dl = ImGui::GetWindowDrawList();
                         const float trackY = cellMin.y + ImGui::GetTextLineHeight() + 2.0f;
                         dl->AddRectFilled(
@@ -411,7 +441,7 @@ namespace ui {
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 12));
             if (ImGui::BeginChild("##flowDetail", ImVec2(detailWidth, 0), true)) {
-                renderFlowDetail(*selectedFlow, geoInfoByIp.at(selectedFlow->key.dstIP));
+                renderFlowDetail(*selectedFlow, geoFor(selectedFlow->key.dstIP));
             }
             ImGui::EndChild();
             ImGui::PopStyleVar(2);

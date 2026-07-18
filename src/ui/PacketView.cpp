@@ -39,11 +39,9 @@ namespace ui {
 
     }
 
-    bool GuiLayer::packetMatchesDisplayFilter(const core::ParsedPacket& packet) const {
-        if (m_displayFilter[0] == '\0') return true;
-        std::string needle{m_displayFilter};
-        for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
+    bool GuiLayer::packetMatchesDisplayFilter(const core::ParsedPacket& packet,
+        const std::string& needle) const {
+        if (needle.empty()) return true;
         if (containsCI(packet.srcIP, needle)) return true;
         if (containsCI(packet.dstIP, needle)) return true;
         if (containsCI(packet.protocol, needle)) return true;
@@ -104,26 +102,45 @@ namespace ui {
             }
         }
 
-        // Resolve the visible row set once per frame.
+        // Resolve the visible row set. The match list is cached and only
+        // recomputed when the filter text, the flow filter, or the packet
+        // history itself changes — while paused or inspecting an offline
+        // capture this costs nothing per frame.
         const bool displayFilterActive = m_displayFilter[0] != '\0';
         const bool anyFilter = m_packetFlowFilter.has_value() || displayFilterActive;
-        std::vector<size_t> matchingPacketIndexes;
         if (anyFilter) {
-            matchingPacketIndexes.reserve(m_packetHistory.size());
-            for (size_t index = 0; index < m_packetHistory.size(); ++index) {
-                const auto& parsed = m_packetHistory[index].parsed;
-                if (m_packetFlowFilter
-                    && !core::FlowAggregator::matches(parsed, *m_packetFlowFilter)) {
-                    continue;
+            std::string signature{m_displayFilter};
+            if (m_packetFlowFilter) {
+                signature += std::format("\x1f{}|{}|{}|{}|{}",
+                    m_packetFlowFilter->srcIP, m_packetFlowFilter->srcPort,
+                    m_packetFlowFilter->dstIP, m_packetFlowFilter->dstPort,
+                    m_packetFlowFilter->protocol);
+            }
+            if (m_filterCacheHistoryVersion != m_packetHistoryVersion
+                || m_filterCacheSignature != signature) {
+                m_filterCacheHistoryVersion = m_packetHistoryVersion;
+                m_filterCacheSignature = std::move(signature);
+
+                std::string needle{m_displayFilter};
+                for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                m_filteredPacketIndexes.clear();
+                m_filteredPacketIndexes.reserve(m_packetHistory.size());
+                for (size_t index = 0; index < m_packetHistory.size(); ++index) {
+                    const auto& parsed = m_packetHistory[index].parsed;
+                    if (m_packetFlowFilter
+                        && !core::FlowAggregator::matches(parsed, *m_packetFlowFilter)) {
+                        continue;
+                    }
+                    if (displayFilterActive && !packetMatchesDisplayFilter(parsed, needle)) {
+                        continue;
+                    }
+                    m_filteredPacketIndexes.push_back(index);
                 }
-                if (displayFilterActive && !packetMatchesDisplayFilter(parsed)) {
-                    continue;
-                }
-                matchingPacketIndexes.push_back(index);
             }
         }
         const int rowCount = anyFilter
-            ? static_cast<int>(matchingPacketIndexes.size())
+            ? static_cast<int>(m_filteredPacketIndexes.size())
             : static_cast<int>(m_packetHistory.size());
 
         ImGui::SameLine();
@@ -152,7 +169,7 @@ namespace ui {
             while (clipper.Step()) {
                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
                     const size_t packetIndex = anyFilter
-                        ? matchingPacketIndexes[static_cast<size_t>(i)]
+                        ? m_filteredPacketIndexes[static_cast<size_t>(i)]
                         : static_cast<size_t>(i);
                     const auto& record = m_packetHistory[packetIndex];
                     const auto& p = record.parsed;

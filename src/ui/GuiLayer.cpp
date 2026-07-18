@@ -418,6 +418,7 @@ namespace ui {
                 if (m_selectedPacketIndex >= 0) --m_selectedPacketIndex;
             }
             m_packetHistory.push_back({*packetOpt, std::move(parsed), std::move(process)});
+            ++m_packetHistoryVersion;
             const core::ParsedPacket& stored = m_packetHistory.back().parsed;
 
             ++m_totalPackets;
@@ -551,6 +552,14 @@ namespace ui {
 
     void GuiLayer::clearCaptureView() {
         m_packetHistory.clear();
+        ++m_packetHistoryVersion;
+        m_filteredPacketIndexes.clear();
+        m_filterCacheHistoryVersion = UINT64_MAX;
+        m_flowsCache.clear();
+        m_flowGeoCache.clear();
+        m_lastFlowsRefresh = -1.0;
+        m_maxFlowBytes = 0;
+        m_activeFlowCount = 0;
         m_selectedPacketIndex = -1;
         m_appCounts.clear();
         m_protocolCounts.clear();

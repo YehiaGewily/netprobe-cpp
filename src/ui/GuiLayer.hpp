@@ -15,6 +15,7 @@
 #include <deque>
 #include <functional>
 #include <optional>
+#include <unordered_map>
 
 struct GLFWwindow;
 struct ImFont;
@@ -112,6 +113,9 @@ namespace ui {
             std::string process;
         };
         std::deque<PacketRecord> m_packetHistory;
+        // Bumped whenever m_packetHistory changes so the display-filter result
+        // cache knows when it is stale.
+        uint64_t m_packetHistoryVersion = 0;
         int m_selectedPacketIndex = -1; // index into m_packetHistory, or -1 if none
         bool m_autoScroll = true;
         std::optional<core::FlowKey> m_packetFlowFilter;
@@ -129,6 +133,12 @@ namespace ui {
         // Unlike the BPF filter it never affects what is captured.
         char m_displayFilter[128]{};
         bool m_focusDisplayFilter = false;
+
+        // Cached display-filter results: recomputed only when the filter text,
+        // the flow filter, or the packet history changes — not every frame.
+        std::vector<size_t> m_filteredPacketIndexes;
+        std::string m_filterCacheSignature;
+        uint64_t m_filterCacheHistoryVersion = UINT64_MAX;
 
         // Statistics
         std::map<std::string, int> m_appCounts;
@@ -164,6 +174,15 @@ namespace ui {
         std::string m_captureStatus;
         bool m_captureStatusIsError = false;
 
+        // Flow snapshot shared by the Flows and Statistics views, refreshed on
+        // a 0.5s cadence instead of copying, geo-resolving, and sorting the
+        // whole flow table every frame in each view.
+        std::vector<core::Flow> m_flowsCache;
+        std::unordered_map<std::string, core::GeoIPInfo> m_flowGeoCache;
+        double m_lastFlowsRefresh = -1.0;
+        uint64_t m_maxFlowBytes = 0;
+        bool m_flowSortDirty = true;
+
         // Rate history of the currently selected flow, sampled alongside the
         // bandwidth tick to drive the sparkline in the flow detail pane.
         ScrollingBuffer m_flowRateHistory{240};
@@ -185,8 +204,11 @@ namespace ui {
         void saveSettings() const;
         void handleShortcuts();
         void setPaused(bool paused);
+        void refreshFlowsCache();
+        void sortFlowsCache();
         bool exportFlowsCsv(const std::string& path, std::string& error);
-        bool packetMatchesDisplayFilter(const core::ParsedPacket& packet) const;
+        bool packetMatchesDisplayFilter(const core::ParsedPacket& packet,
+            const std::string& needleLower) const;
         static void linearizeBuffer(const ScrollingBuffer& buffer,
             std::vector<float>& time, std::vector<float>& data);
 

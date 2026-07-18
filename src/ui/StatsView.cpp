@@ -142,10 +142,12 @@ namespace ui {
                 uint64_t packets = 0;
                 int flows = 0;
             };
-            const auto flows = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+            // Reuses the flow snapshot cached by refreshFlowsCache (0.5s
+            // cadence) instead of taking a second full snapshot every frame.
+            refreshFlowsCache();
             std::unordered_map<std::string, Talker> byHost;
             uint64_t totalBytes = 0;
-            for (const auto& flow : flows) {
+            for (const auto& flow : m_flowsCache) {
                 const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
                 Talker& talker = byHost[host];
                 talker.host = host;
