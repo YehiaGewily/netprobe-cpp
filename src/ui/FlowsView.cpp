@@ -294,9 +294,9 @@ namespace ui {
         }
 
         // When a flow is selected the window splits: table left, detail right.
-        const float detailWidth = 330.0f;
+        const float detailWidth = scaled(330.0f);
         const bool showDetail = selectedFlow.has_value()
-            && ImGui::GetContentRegionAvail().x > detailWidth + 260.0f;
+            && ImGui::GetContentRegionAvail().x > detailWidth + scaled(260.0f);
         if (showDetail) {
             ImGui::BeginChild("##flowTableHost",
                 ImVec2(ImGui::GetContentRegionAvail().x - detailWidth - 8.0f, 0), false);
@@ -310,16 +310,16 @@ namespace ui {
 
         if (ImGui::BeginTable("FlowsTable", 11, tableFlags)) {
             ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-            ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-            ImGui::TableSetupColumn("Service", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Proto", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Pkts", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-            ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, 90.0f);
-            ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 85.0f);
-            ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-            ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, scaled(65.0f));
+            ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, scaled(180.0f));
+            ImGui::TableSetupColumn("Service", ImGuiTableColumnFlags_WidthFixed, scaled(100.0f));
+            ImGui::TableSetupColumn("Proto", ImGuiTableColumnFlags_WidthFixed, scaled(100.0f));
+            ImGui::TableSetupColumn("Pkts", ImGuiTableColumnFlags_WidthFixed, scaled(65.0f));
+            ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, scaled(90.0f));
+            ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, scaled(90.0f));
+            ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, scaled(85.0f));
+            ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, scaled(70.0f));
+            ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, scaled(130.0f));
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs(); sortSpecs && sortSpecs->SpecsDirty) {

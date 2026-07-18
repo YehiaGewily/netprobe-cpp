@@ -65,6 +65,20 @@ namespace ui {
         glfwMakeContextCurrent(m_window);
         glfwSwapInterval(1); // Enable vsync
         glfwSetWindowUserPointer(m_window, this);
+
+        // Per-monitor DPI: pick up the content scale of whichever monitor the
+        // window actually landed on, and re-theme when it moves to another.
+        float contentScale = 1.0f;
+        glfwGetWindowContentScale(m_window, &contentScale, nullptr);
+        if (contentScale > 0.0f) m_contentScale = contentScale;
+        glfwSetWindowContentScaleCallback(m_window,
+            [](GLFWwindow* window, float xScale, float) {
+                auto* gui = static_cast<GuiLayer*>(glfwGetWindowUserPointer(window));
+                if (gui && xScale > 0.0f && std::abs(xScale - gui->m_contentScale) > 0.01f) {
+                    gui->m_contentScale = xScale;
+                    gui->applyTheme();
+                }
+            });
         glfwSetDropCallback(m_window, [](GLFWwindow* window, int pathCount, const char** paths) {
             auto* gui = static_cast<GuiLayer*>(glfwGetWindowUserPointer(window));
             if (gui && pathCount > 0 && paths[0]) {
@@ -161,7 +175,10 @@ namespace ui {
         applyPalette(m_darkTheme);
 
         ImGuiStyle& style = ImGui::GetStyle();
-        style.FontScaleMain = m_uiScale;
+        // Rebuild from defaults so repeated calls (theme toggle, monitor DPI
+        // change) never compound the ScaleAllSizes multiplication below.
+        style = ImGuiStyle();
+        style.FontScaleMain = m_uiScale * m_contentScale;
 
         style.WindowPadding     = ImVec2(18, 16);
         style.FramePadding      = ImVec2(12, 7);
@@ -241,6 +258,10 @@ namespace ui {
             : ImVec4(0, 0, 0, 0.020f);
         c[ImGuiCol_TextSelectedBg]        = kAccentSoft;
         c[ImGuiCol_NavHighlight]          = kAccent;
+
+        // All style metrics above are authored at 100% scale; stretch them to
+        // the monitor's DPI so padding and spacing match the scaled fonts.
+        style.ScaleAllSizes(m_contentScale);
 
         // ImPlot — minimal, removes most chrome.
         ImPlotStyle& ps = ImPlot::GetStyle();

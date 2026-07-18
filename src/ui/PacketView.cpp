@@ -62,7 +62,7 @@ namespace ui {
 
         // Toolbar: display filter + view controls. The display filter narrows
         // what is shown; it never affects capture (that's the BPF box above).
-        ImGui::SetNextItemWidth(220.0f);
+        ImGui::SetNextItemWidth(scaled(220.0f));
         if (m_focusDisplayFilter) {
             ImGui::SetKeyboardFocusHere();
             m_focusDisplayFilter = false;
@@ -154,12 +154,12 @@ namespace ui {
         if (ImGui::BeginTable("PacketTable", 7,
             ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable)) {
 
-            ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 105.0f);
-            ImGui::TableSetupColumn("Source IP", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Dest IP", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Protocol", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, scaled(105.0f));
+            ImGui::TableSetupColumn("Source IP", ImGuiTableColumnFlags_WidthFixed, scaled(110.0f));
+            ImGui::TableSetupColumn("Dest IP", ImGuiTableColumnFlags_WidthFixed, scaled(110.0f));
+            ImGui::TableSetupColumn("Protocol", ImGuiTableColumnFlags_WidthFixed, scaled(60.0f));
+            ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthFixed, scaled(60.0f));
+            ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, scaled(140.0f));
             ImGui::TableSetupColumn("Service / Info", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableHeadersRow();
 

@@ -183,6 +183,9 @@ namespace ui {
         uint64_t m_maxFlowBytes = 0;
         bool m_flowSortDirty = true;
 
+        // Windows DPI: content scale of the monitor the window sits on.
+        float m_contentScale = 1.0f;
+
         // Rate history of the currently selected flow, sampled alongside the
         // bandwidth tick to drive the sparkline in the flow detail pane.
         ScrollingBuffer m_flowRateHistory{240};
@@ -206,6 +209,8 @@ namespace ui {
         void setPaused(bool paused);
         void refreshFlowsCache();
         void sortFlowsCache();
+        // Fixed pixel sizes authored at 100% scale, adjusted for monitor DPI.
+        float scaled(float value) const { return value * m_contentScale; }
         bool exportFlowsCsv(const std::string& path, std::string& error);
         bool packetMatchesDisplayFilter(const core::ParsedPacket& packet,
             const std::string& needleLower) const;
