@@ -23,6 +23,7 @@ namespace ui {
     GuiLayer::GuiLayer(core::PacketQueue& queue) : m_queue(queue) {}
 
     GuiLayer::~GuiLayer() {
+        captureWindowGeometry();
         saveSettings();
         if (m_window) {
             ImGui_ImplOpenGL3_Shutdown();
@@ -40,14 +41,51 @@ namespace ui {
     bool GuiLayer::init() {
         if (!glfwInit()) return false;
 
+        // Settings are needed before window creation: they carry the saved
+        // window geometry and maximized state from the previous run.
+        loadSettings();
+
         const char* glsl_version = "#version 130";
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        if (m_savedWindowMaximized) glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
-        m_window = glfwCreateWindow(1440, 900, "NetProbe  -  Network Analyzer", NULL, NULL);
+        // A saved size is already in physical pixels; the default size is
+        // authored for 100% scale and multiplied by the primary monitor's
+        // content scale so first launch isn't tiny on high-DPI displays.
+        int width = 1440, height = 900;
+        if (m_savedWindowW > 0 && m_savedWindowH > 0) {
+            width = std::clamp(m_savedWindowW, 800, 16384);
+            height = std::clamp(m_savedWindowH, 500, 16384);
+        } else if (GLFWmonitor* primary = glfwGetPrimaryMonitor()) {
+            float scaleX = 1.0f, scaleY = 1.0f;
+            glfwGetMonitorContentScale(primary, &scaleX, &scaleY);
+            width = static_cast<int>(width * scaleX);
+            height = static_cast<int>(height * scaleY);
+        }
+
+        m_window = glfwCreateWindow(width, height, "NetProbe  -  Network Analyzer", NULL, NULL);
         if (!m_window) {
             glfwTerminate();
             return false;
+        }
+
+        // Restore the previous window position, but only when its center still
+        // falls on a connected monitor — displays come and go between runs.
+        if (m_hasSavedWindowPos && !m_savedWindowMaximized) {
+            int monitorCount = 0;
+            GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+            const int centerX = m_savedWindowX + width / 2;
+            const int centerY = m_savedWindowY + height / 2;
+            for (int i = 0; i < monitorCount; ++i) {
+                int mx, my, mw, mh;
+                glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+                if (centerX >= mx && centerX < mx + mw && centerY >= my && centerY < my + mh) {
+                    glfwSetWindowPos(m_window, m_savedWindowX, m_savedWindowY);
+                    break;
+                }
+            }
         }
 
         // Title-bar and taskbar icon — the embedded .ico covers Explorer /
@@ -61,6 +99,7 @@ namespace ui {
         icons[2] = {kEmbeddedIcon48Size, kEmbeddedIcon48Size,
             const_cast<unsigned char*>(kEmbeddedIcon48Pixels)};
         glfwSetWindowIcon(m_window, 3, icons);
+        glfwShowWindow(m_window);
 
         glfwMakeContextCurrent(m_window);
         glfwSwapInterval(1); // Enable vsync
@@ -103,7 +142,6 @@ namespace ui {
         // doesn't override the new default dockspace on the first run.
         io.IniFilename = "netprobe-layout.ini";
 
-        loadSettings();
         loadFonts();
         applyTheme();
 
@@ -160,6 +198,16 @@ namespace ui {
                 } catch (...) {
                     m_uiScale = 1.0f;
                 }
+            } else if (key == "window") {
+                int x = 0, y = 0, w = 0, h = 0, maximized = 0;
+                if (std::sscanf(value.c_str(), "%d %d %d %d %d", &x, &y, &w, &h, &maximized) == 5) {
+                    m_savedWindowX = x;
+                    m_savedWindowY = y;
+                    m_savedWindowW = w;
+                    m_savedWindowH = h;
+                    m_savedWindowMaximized = maximized != 0;
+                    m_hasSavedWindowPos = true;
+                }
             }
         }
     }
@@ -169,6 +217,25 @@ namespace ui {
         if (!file) return;
         file << "theme=" << (m_darkTheme ? "dark" : "light") << '\n';
         file << "scale=" << m_uiScale << '\n';
+        if (m_savedWindowW > 0 && m_savedWindowH > 0) {
+            file << "window=" << m_savedWindowX << ' ' << m_savedWindowY << ' '
+                 << m_savedWindowW << ' ' << m_savedWindowH << ' '
+                 << (m_savedWindowMaximized ? 1 : 0) << '\n';
+        }
+    }
+
+    void GuiLayer::captureWindowGeometry() {
+        if (!m_window) return;
+        m_savedWindowMaximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE;
+        // While maximized (or minimized) the current rect is not the one worth
+        // restoring — keep the last normal geometry already recorded.
+        if (m_savedWindowMaximized
+            || glfwGetWindowAttrib(m_window, GLFW_ICONIFIED) == GLFW_TRUE) {
+            return;
+        }
+        glfwGetWindowPos(m_window, &m_savedWindowX, &m_savedWindowY);
+        glfwGetWindowSize(m_window, &m_savedWindowW, &m_savedWindowH);
+        m_hasSavedWindowPos = true;
     }
 
     void GuiLayer::applyTheme() {

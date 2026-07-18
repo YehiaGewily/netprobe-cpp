@@ -186,6 +186,14 @@ namespace ui {
         // Windows DPI: content scale of the monitor the window sits on.
         float m_contentScale = 1.0f;
 
+        // Window geometry persisted across runs (0 width = nothing saved).
+        int m_savedWindowX = 0;
+        int m_savedWindowY = 0;
+        int m_savedWindowW = 0;
+        int m_savedWindowH = 0;
+        bool m_savedWindowMaximized = false;
+        bool m_hasSavedWindowPos = false;
+
         // Rate history of the currently selected flow, sampled alongside the
         // bandwidth tick to drive the sparkline in the flow detail pane.
         ScrollingBuffer m_flowRateHistory{240};
@@ -209,6 +217,7 @@ namespace ui {
         void setPaused(bool paused);
         void refreshFlowsCache();
         void sortFlowsCache();
+        void captureWindowGeometry();
         // Fixed pixel sizes authored at 100% scale, adjusted for monitor DPI.
         float scaled(float value) const { return value * m_contentScale; }
         bool exportFlowsCsv(const std::string& path, std::string& error);
