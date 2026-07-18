@@ -154,7 +154,8 @@ namespace ui {
                     const size_t packetIndex = anyFilter
                         ? matchingPacketIndexes[static_cast<size_t>(i)]
                         : static_cast<size_t>(i);
-                    const auto& p = m_packetHistory[packetIndex].parsed;
+                    const auto& record = m_packetHistory[packetIndex];
+                    const auto& p = record.parsed;
                     ImGui::TableNextRow();
 
                     // Make the time cell drive row selection. Span-all-columns
@@ -216,8 +217,10 @@ namespace ui {
                     ImGui::Text("%u", p.length);
 
                     ImGui::TableSetColumnIndex(5);
-                    if (const std::string app = m_processResolver.lookup(p); !app.empty()) {
-                        ImGui::TextColored(kText1, "%s", app.c_str());
+                    // Resolved once at ingest (see processQueue) so the name is
+                    // stable after the socket closes and costs nothing here.
+                    if (!record.process.empty()) {
+                        ImGui::TextColored(kText1, "%s", record.process.c_str());
                     } else {
                         ImGui::TextDisabled("--");
                     }

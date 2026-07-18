@@ -406,28 +406,31 @@ namespace ui {
                 hostname = *sourceHostname;
             }
             // Resolve the owning process now, while the socket is almost
-            // certainly still in the OS table; the flow caches it so the name
-            // survives after a short-lived connection closes.
-            m_flowAggregator.update(parsed, hostname, m_processResolver.lookup(parsed));
+            // certainly still in the OS table; both the flow and the packet
+            // record cache it so the name survives after a short-lived
+            // connection closes.
+            std::string process = m_processResolver.lookup(parsed);
+            m_flowAggregator.update(parsed, hostname, process);
 
             // Keep the visual history bounded while retaining all-time counters separately.
             if (m_packetHistory.size() >= maxPacketHistory) {
                 m_packetHistory.pop_front();
                 if (m_selectedPacketIndex >= 0) --m_selectedPacketIndex;
             }
-            m_packetHistory.push_back({*packetOpt, parsed});
+            m_packetHistory.push_back({*packetOpt, std::move(parsed), std::move(process)});
+            const core::ParsedPacket& stored = m_packetHistory.back().parsed;
 
             ++m_totalPackets;
-            m_bytesThisSec += parsed.length;
-            if (parsed.protocol == "TCP") {
-                m_tcpBytesThisSec += parsed.length;
-            } else if (parsed.protocol == "UDP") {
-                m_udpBytesThisSec += parsed.length;
+            m_bytesThisSec += stored.length;
+            if (stored.protocol == "TCP") {
+                m_tcpBytesThisSec += stored.length;
+            } else if (stored.protocol == "UDP") {
+                m_udpBytesThisSec += stored.length;
             }
-            m_protocolCounts[parsed.protocol]++;
-            m_protocolBytes[parsed.protocol] += parsed.length;
-            if (!parsed.service.empty()) {
-                m_appCounts[parsed.service]++;
+            m_protocolCounts[stored.protocol]++;
+            m_protocolBytes[stored.protocol] += stored.length;
+            if (!stored.service.empty()) {
+                m_appCounts[stored.service]++;
             }
 
             count++;

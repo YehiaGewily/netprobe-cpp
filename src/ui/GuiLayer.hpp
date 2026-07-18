@@ -106,6 +106,10 @@ namespace ui {
         struct PacketRecord {
             core::PacketData raw;
             core::ParsedPacket parsed;
+            // Owning process resolved at ingest, while the socket is still in
+            // the OS table. Stored so the App column stays stable after the
+            // connection closes instead of re-resolving every frame.
+            std::string process;
         };
         std::deque<PacketRecord> m_packetHistory;
         int m_selectedPacketIndex = -1; // index into m_packetHistory, or -1 if none

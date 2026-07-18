@@ -214,11 +214,9 @@ namespace ui {
             } else {
                 kv("Hostname", "");
             }
-            if (const std::string app = m_processResolver.lookup(p); !app.empty()) {
-                kv("Process", app);
-            } else {
-                kv("Process", "");
-            }
+            // Resolved at ingest and stored on the record, so the process name
+            // survives after the socket closes.
+            kv("Process", record.process);
 
             ImGui::EndTable();
         }
