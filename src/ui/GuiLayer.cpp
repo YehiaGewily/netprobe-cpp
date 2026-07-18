@@ -238,6 +238,12 @@ namespace ui {
         m_hasSavedWindowPos = true;
     }
 
+    void GuiLayer::setStatus(std::string message, bool isError) {
+        m_captureStatus = std::move(message);
+        m_captureStatusIsError = isError;
+        m_captureStatusTime = glfwGetTime();
+    }
+
     void GuiLayer::applyTheme() {
         applyPalette(m_darkTheme);
 
@@ -355,12 +361,42 @@ namespace ui {
 
     void GuiLayer::run() {
         while (!glfwWindowShouldClose(m_window)) {
-            glfwPollEvents();
+            // While minimized there is nothing to draw: keep draining the
+            // packet queue at a low rate so counters and flows stay current,
+            // but skip rendering entirely.
+            if (glfwGetWindowAttrib(m_window, GLFW_ICONIFIED) == GLFW_TRUE) {
+                glfwWaitEventsTimeout(0.1);
+                processQueue();
+                continue;
+            }
+
+            // Frame pacing: run at full (vsync) rate only while live traffic
+            // is streaming or the user recently interacted. Otherwise sleep on
+            // the event queue — any input wakes the loop immediately, so the
+            // UI stays responsive while an idle window stops burning CPU/GPU.
+            const bool streaming = m_captureActive && !m_capturePaused;
+            const bool recentInput = glfwGetTime() - m_lastInputTime < 0.75;
+            if (streaming || recentInput) {
+                glfwPollEvents();
+            } else {
+                glfwWaitEventsTimeout(1.0 / 15.0);
+            }
             processQueue();
+
+            // Track the last normal (non-maximized) window rect so it can be
+            // persisted on exit.
+            captureWindowGeometry();
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
+
+            const ImGuiIO& io = ImGui::GetIO();
+            if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f
+                || io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f
+                || ImGui::IsAnyMouseDown() || io.WantTextInput) {
+                m_lastInputTime = glfwGetTime();
+            }
 
             renderUI();
 
@@ -745,16 +781,13 @@ namespace ui {
                 if (result == NFD_OKAY) {
                     std::string error;
                     if (onPcapSaveRequested && onPcapSaveRequested(selectedPath, error)) {
-                        m_captureStatus = "PCAP session saved.";
-                        m_captureStatusIsError = false;
+                        setStatus("PCAP session saved.", false);
                     } else {
-                        m_captureStatus = error.empty() ? "Unable to save the PCAP session." : error;
-                        m_captureStatusIsError = true;
+                        setStatus(error.empty() ? "Unable to save the PCAP session." : error, true);
                     }
                     NFD_FreePathU8(selectedPath);
                 } else if (result == NFD_ERROR) {
-                    m_captureStatus = NFD_GetError() ? NFD_GetError() : "Unable to open the save dialog.";
-                    m_captureStatusIsError = true;
+                    setStatus(NFD_GetError() ? NFD_GetError() : "Unable to open the save dialog.", true);
                 }
             }
             if (ImGui::MenuItem("Export Flows CSV...", nullptr, false, m_nfdInitialized)) {
@@ -767,16 +800,13 @@ namespace ui {
                 if (result == NFD_OKAY) {
                     std::string error;
                     if (exportFlowsCsv(selectedPath, error)) {
-                        m_captureStatus = "Flows exported to CSV.";
-                        m_captureStatusIsError = false;
+                        setStatus("Flows exported to CSV.", false);
                     } else {
-                        m_captureStatus = error.empty() ? "Unable to export flows." : error;
-                        m_captureStatusIsError = true;
+                        setStatus(error.empty() ? "Unable to export flows." : error, true);
                     }
                     NFD_FreePathU8(selectedPath);
                 } else if (result == NFD_ERROR) {
-                    m_captureStatus = NFD_GetError() ? NFD_GetError() : "Unable to open the save dialog.";
-                    m_captureStatusIsError = true;
+                    setStatus(NFD_GetError() ? NFD_GetError() : "Unable to open the save dialog.", true);
                 }
             }
             ImGui::Separator();
@@ -829,7 +859,7 @@ namespace ui {
         // Adapter selector
         ImGui::TextColored(kText3, "ADAPTER");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(300.0f);
+        ImGui::SetNextItemWidth(scaled(300.0f));
         if (m_devices.empty()) {
             ImGui::BeginDisabled();
             ImGui::BeginCombo("##deviceCombo", "No adapters detected");
@@ -845,6 +875,7 @@ namespace ui {
                     if (onDeviceSelected) {
                         onDeviceSelected(m_devices[n].name);
                         m_captureActive = true;
+                        setStatus("Capture started.", false);
                     }
                 }
                 if (is_selected) ImGui::SetItemDefaultFocus();
@@ -859,8 +890,7 @@ namespace ui {
             if (ImGui::Button("Stop")) {
                 if (onCaptureStopRequested) onCaptureStopRequested();
                 m_captureActive = false;
-                m_captureStatus = "Capture stopped.";
-                m_captureStatusIsError = false;
+                setStatus("Capture stopped.", false);
             }
             ImGui::PopStyleColor();
         } else {
@@ -872,8 +902,7 @@ namespace ui {
                 if (onDeviceSelected) {
                     onDeviceSelected(m_devices[m_selectedDeviceIndex].name);
                     m_captureActive = true;
-                    m_captureStatus = "Capture started.";
-                    m_captureStatusIsError = false;
+                    setStatus("Capture started.", false);
                 }
             }
             ImGui::PopStyleColor();
@@ -892,20 +921,23 @@ namespace ui {
         ImGui::SameLine(0.0f, 24.0f);
         ImGui::TextColored(kText3, "FILTER");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(240.0f);
+        ImGui::SetNextItemWidth(scaled(240.0f));
         if (ImGui::InputTextWithHint("##bpfFilter", "tcp port 443",
                 m_bpfFilter, sizeof(m_bpfFilter), ImGuiInputTextFlags_EnterReturnsTrue)) {
             std::string error;
             if (onBpfFilterRequested && onBpfFilterRequested(m_bpfFilter, error)) {
-                m_captureStatus = m_bpfFilter[0] == '\0' ? "BPF filter cleared." : "BPF filter applied.";
-                m_captureStatusIsError = false;
+                setStatus(m_bpfFilter[0] == '\0' ? "BPF filter cleared." : "BPF filter applied.", false);
             } else {
-                m_captureStatus = error.empty() ? "Unable to apply BPF filter." : error;
-                m_captureStatusIsError = true;
+                setStatus(error.empty() ? "Unable to apply BPF filter." : error, true);
             }
         }
         ImGui::SetItemTooltip("Capture filter (BPF syntax) — press Enter to apply.\nOnly affects what is captured, not what is shown.");
 
+        // Status messages expire after a few seconds instead of lingering
+        // until the next action replaces them.
+        if (!m_captureStatus.empty() && glfwGetTime() - m_captureStatusTime > 6.0) {
+            m_captureStatus.clear();
+        }
         if (!m_captureStatus.empty()) {
             ImGui::SameLine(0.0f, 18.0f);
             ImGui::TextColored(m_captureStatusIsError ? kDanger : kSuccess, "%s", m_captureStatus.c_str());

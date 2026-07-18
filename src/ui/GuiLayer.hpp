@@ -173,6 +173,7 @@ namespace ui {
         char m_bpfFilter[256]{};
         std::string m_captureStatus;
         bool m_captureStatusIsError = false;
+        double m_captureStatusTime = 0.0;
 
         // Flow snapshot shared by the Flows and Statistics views, refreshed on
         // a 0.5s cadence instead of copying, geo-resolving, and sorting the
@@ -193,6 +194,10 @@ namespace ui {
         int m_savedWindowH = 0;
         bool m_savedWindowMaximized = false;
         bool m_hasSavedWindowPos = false;
+
+        // Frame pacing: full rate only while live data streams or the user is
+        // interacting; otherwise the loop sleeps on the event queue.
+        double m_lastInputTime = 0.0;
 
         // Rate history of the currently selected flow, sampled alongside the
         // bandwidth tick to drive the sparkline in the flow detail pane.
@@ -215,6 +220,7 @@ namespace ui {
         void saveSettings() const;
         void handleShortcuts();
         void setPaused(bool paused);
+        void setStatus(std::string message, bool isError);
         void refreshFlowsCache();
         void sortFlowsCache();
         void captureWindowGeometry();
