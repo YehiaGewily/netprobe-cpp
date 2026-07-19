@@ -319,7 +319,7 @@ namespace core {
             for (int i = 0; i < 4; ++i) {
                 const uint32_t group = static_cast<uint32_t>(
                     std::strtoul(hex.substr(static_cast<size_t>(i) * 8, 8).c_str(), nullptr, 16));
-                std::memcpy(addr + i * 4, &group, 4);
+                std::memcpy(addr + static_cast<size_t>(i) * 4, &group, 4);
             }
             return inet_ntop(AF_INET6, addr, out, static_cast<socklen_t>(outSize)) != nullptr;
         }
