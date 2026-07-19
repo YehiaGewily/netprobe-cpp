@@ -128,4 +128,272 @@ namespace test {
         return record;
     }
 
+    // ---------------------------------------------------------------------
+    // Adversarial inputs.
+    //
+    // Wire-format constructors that lie about their own structure: headers
+    // claiming lengths the buffer does not contain, chains that run off the
+    // end, counts that exceed the data present. These are the shapes that
+    // crash capture tools in production, and they are shared with the fuzz
+    // seed corpus so libFuzzer starts from them rather than rediscovering
+    // them byte by byte.
+    // ---------------------------------------------------------------------
+    namespace malformed {
+
+        struct Case {
+            std::string name;
+            std::vector<uint8_t> bytes;
+        };
+
+        // Offsets into an Ethernet + IPv4 frame.
+        inline constexpr size_t kEthernetSize = 14;
+        inline constexpr size_t kIPv4Offset = kEthernetSize;
+        inline constexpr size_t kIPv4VersionIhl = kIPv4Offset;
+        inline constexpr size_t kIPv4TotalLength = kIPv4Offset + 2;
+        inline constexpr size_t kTcpOffset = kIPv4Offset + 20;
+        inline constexpr size_t kTcpDataOffset = kTcpOffset + 12;
+
+        inline std::vector<uint8_t> validTcpFrame(const std::vector<uint8_t>& payload) {
+            std::vector<uint8_t> packet;
+            appendEthernetHeader(packet, 0x0800);
+            appendIPv4Header(packet, static_cast<uint16_t>(20 + 20 + payload.size()), 6,
+                {192, 168, 1, 10}, {93, 184, 216, 34});
+            appendTcpHeader(packet, 50000, 443, 1000, 0x18);
+            packet.insert(packet.end(), payload.begin(), payload.end());
+            return packet;
+        }
+
+        inline std::vector<uint8_t> validUdpFrame(const std::vector<uint8_t>& payload) {
+            std::vector<uint8_t> packet;
+            appendEthernetHeader(packet, 0x0800);
+            appendIPv4Header(packet, static_cast<uint16_t>(20 + 8 + payload.size()), 17,
+                {8, 8, 8, 8}, {192, 168, 1, 10});
+            appendUdpHeader(packet, 53, 53000, static_cast<uint16_t>(payload.size()));
+            packet.insert(packet.end(), payload.begin(), payload.end());
+            return packet;
+        }
+
+        inline std::vector<uint8_t> truncatedTo(std::vector<uint8_t> bytes, size_t size) {
+            if (bytes.size() > size) bytes.resize(size);
+            return bytes;
+        }
+
+        // An IPv6 frame whose next-header chain is supplied verbatim, so a
+        // caller can build chains that overrun or run long.
+        inline std::vector<uint8_t> ipv6WithChain(uint8_t firstNextHeader,
+            const std::vector<uint8_t>& chain) {
+            std::vector<uint8_t> packet;
+            appendEthernetHeader(packet, 0x86DD);
+            appendIPv6Header(packet, static_cast<uint16_t>(chain.size()), firstNextHeader,
+                {0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+                {0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2});
+            packet.insert(packet.end(), chain.begin(), chain.end());
+            return packet;
+        }
+
+        inline std::vector<Case> allCases() {
+            std::vector<Case> cases;
+            const auto add = [&cases](std::string name, std::vector<uint8_t> bytes) {
+                cases.push_back({std::move(name), std::move(bytes)});
+            };
+
+            const auto tlsFrame = validTcpFrame(makeTlsClientHello("truncated.example.com"));
+            const auto httpFrame = validTcpFrame(makeHttpRequest("truncated.example.com"));
+
+            // --- Truncation at every layer boundary --------------------------
+            add("empty", {});
+            add("one-byte", {0x00});
+            for (const size_t size : {6u, 13u, 14u, 15u, 20u, 33u, 34u, 40u, 45u, 53u}) {
+                add("tls-frame-truncated-to-" + std::to_string(size),
+                    truncatedTo(tlsFrame, size));
+            }
+            add("http-frame-truncated-mid-payload", truncatedTo(httpFrame, 60));
+
+            // --- IPv4 headers that lie --------------------------------------
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4VersionIhl] = 0x40; // IHL = 0, below the 20-byte minimum
+                add("ipv4-ihl-zero", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4VersionIhl] = 0x44; // IHL = 4 words = 16 bytes
+                add("ipv4-ihl-below-minimum", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4VersionIhl] = 0x4F; // IHL = 15 words = 60 bytes of options
+                add("ipv4-ihl-claims-options-past-header", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4TotalLength] = 0xFF; // total length far beyond the buffer
+                packet[kIPv4TotalLength + 1] = 0xFF;
+                add("ipv4-total-length-exceeds-buffer", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4TotalLength] = 0x00; // total length below the header size
+                packet[kIPv4TotalLength + 1] = 0x08;
+                add("ipv4-total-length-below-header", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kIPv4VersionIhl] = 0x65; // version 6 in an IPv4 ethertype frame
+                add("ipv4-version-mismatch", packet);
+            }
+
+            // --- TCP headers that lie ---------------------------------------
+            {
+                auto packet = tlsFrame;
+                packet[kTcpDataOffset] = 0xF0; // data offset = 15 words = 60 bytes
+                add("tcp-data-offset-past-payload", packet);
+            }
+            {
+                auto packet = tlsFrame;
+                packet[kTcpDataOffset] = 0x00; // data offset = 0, below the 20-byte minimum
+                add("tcp-data-offset-zero", packet);
+            }
+
+            // --- UDP headers that lie ---------------------------------------
+            {
+                auto packet = validUdpFrame({0xDE, 0xAD, 0xBE, 0xEF});
+                packet[kIPv4Offset + 20 + 4] = 0xFF; // UDP length beyond the buffer
+                packet[kIPv4Offset + 20 + 5] = 0xFF;
+                add("udp-length-exceeds-buffer", packet);
+            }
+            {
+                auto packet = validUdpFrame({0xDE, 0xAD, 0xBE, 0xEF});
+                packet[kIPv4Offset + 20 + 4] = 0x00; // UDP length below its own 8-byte header
+                packet[kIPv4Offset + 20 + 5] = 0x02;
+                add("udp-length-below-header", packet);
+            }
+
+            // --- IPv6 extension header chains -------------------------------
+            {
+                // Hop-by-hop -> routing -> fragment -> TCP, all well formed.
+                std::vector<uint8_t> chain = {43, 0}; // hop-by-hop: next=routing, len=0 (8 bytes)
+                chain.resize(8, 0x00);
+                chain.insert(chain.end(), {44, 0});   // routing: next=fragment
+                chain.resize(16, 0x00);
+                chain.insert(chain.end(), {6, 0});    // fragment: next=TCP
+                chain.resize(24, 0x00);
+                add("ipv6-valid-extension-chain", ipv6WithChain(0, chain));
+            }
+            {
+                // Hop-by-hop claiming 2048 bytes of options that are not there.
+                const std::vector<uint8_t> chain = {6, 0xFF, 0, 0, 0, 0, 0, 0};
+                add("ipv6-extension-length-past-packet", ipv6WithChain(0, chain));
+            }
+            {
+                // A long but individually valid chain: the walk must terminate
+                // because every step advances at least 8 bytes.
+                std::vector<uint8_t> chain;
+                constexpr int kLinks = 64;
+                for (int link = 0; link < kLinks; ++link) {
+                    chain.push_back(link + 1 == kLinks ? uint8_t{6} : uint8_t{0});
+                    chain.push_back(0); // length 0 => this header occupies 8 bytes
+                    chain.resize(chain.size() + 6, 0x00);
+                }
+                add("ipv6-long-extension-chain", ipv6WithChain(0, chain));
+            }
+            {
+                // Destination-options header pointing at itself as the next
+                // header, repeatedly. Terminates only because pos advances.
+                std::vector<uint8_t> chain;
+                for (int link = 0; link < 16; ++link) {
+                    chain.push_back(60); // next header = destination options again
+                    chain.push_back(0);
+                    chain.resize(chain.size() + 6, 0x00);
+                }
+                add("ipv6-self-referential-extension-chain", ipv6WithChain(60, chain));
+            }
+
+            // --- DNS payloads that lie --------------------------------------
+            {
+                std::vector<uint8_t> dns;
+                appendU16(dns, 0x1234);
+                appendU16(dns, 0x8180);
+                appendU16(dns, 1);
+                appendU16(dns, 20); // claims 20 answers
+                appendU16(dns, 0);
+                appendU16(dns, 0);
+                appendDnsName(dns, "www.example.com");
+                appendU16(dns, 1);
+                appendU16(dns, 1);
+                add("dns-answer-count-exceeds-payload", validUdpFrame(dns));
+            }
+            {
+                // A compression pointer that points back at itself.
+                std::vector<uint8_t> dns;
+                appendU16(dns, 0x1234);
+                appendU16(dns, 0x8180);
+                appendU16(dns, 1);
+                appendU16(dns, 1);
+                appendU16(dns, 0);
+                appendU16(dns, 0);
+                dns.insert(dns.end(), {0xC0, 0x0C}); // pointer to offset 12 == itself
+                appendU16(dns, 1);
+                appendU16(dns, 1);
+                add("dns-self-referential-compression-pointer", validUdpFrame(dns));
+            }
+            {
+                // A label whose length runs past the end of the payload.
+                std::vector<uint8_t> dns;
+                appendU16(dns, 0x1234);
+                appendU16(dns, 0x8180);
+                appendU16(dns, 1);
+                appendU16(dns, 0);
+                appendU16(dns, 0);
+                appendU16(dns, 0);
+                dns.push_back(0x3F); // 63-byte label with 3 bytes following
+                dns.insert(dns.end(), {'a', 'b', 'c'});
+                add("dns-label-runs-past-payload", validUdpFrame(dns));
+            }
+            {
+                std::vector<uint8_t> dns;
+                appendU16(dns, 0x1234);
+                appendU16(dns, 0x8180);
+                add("dns-truncated-mid-header", validUdpFrame(dns));
+            }
+
+            // --- TLS records that lie ---------------------------------------
+            {
+                // Record header announcing 64 KB with almost nothing behind it.
+                std::vector<uint8_t> tls = {0x16, 0x03, 0x01, 0xFF, 0xFF, 0x01, 0x00, 0xFF, 0xFB};
+                add("tls-record-length-exceeds-payload", validTcpFrame(tls));
+            }
+            {
+                auto tls = makeTlsClientHello("half.example.com");
+                tls.resize(tls.size() / 2);
+                add("tls-client-hello-truncated", validTcpFrame(tls));
+            }
+
+            // --- QUIC long headers that lie ---------------------------------
+            {
+                // Long header, version 1, destination CID length 255.
+                std::vector<uint8_t> quic = {0xC0, 0x00, 0x00, 0x00, 0x01, 0xFF};
+                quic.resize(32, 0x41);
+                add("quic-connection-id-length-exceeds-packet", validUdpFrame(quic));
+            }
+            {
+                // Truncated part way through the version field.
+                const std::vector<uint8_t> quic = {0xC0, 0x00, 0x00};
+                add("quic-truncated-mid-version", validUdpFrame(quic));
+            }
+            {
+                // Token length varint claiming an implausible size.
+                std::vector<uint8_t> quic = {0xC0, 0x00, 0x00, 0x00, 0x01, 0x08};
+                quic.resize(14, 0x42);       // 8-byte destination CID
+                quic.push_back(0x00);        // source CID length 0
+                quic.push_back(0xFF);        // token length varint, 8-byte form, huge
+                quic.resize(quic.size() + 3, 0xFF);
+                add("quic-token-length-exceeds-packet", validUdpFrame(quic));
+            }
+
+            return cases;
+        }
+
+    } // namespace malformed
+
 } // namespace test
