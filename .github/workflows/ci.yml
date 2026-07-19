@@ -173,17 +173,26 @@ jobs:
       # FetchContent and is not ours to fix; .clang-tidy's HeaderFilterRegex
       # keeps their headers out of the report as well.
       # Driving clang-tidy directly rather than through run-clang-tidy, which
-      # is packaged inconsistently across distributions. .clang-tidy sets
-      # WarningsAsErrors, so any finding makes the invocation fail.
+      # is packaged inconsistently across distributions.
+      #
+      # The pass/fail signal is the EXIT CODE, not the output. .clang-tidy
+      # sets WarningsAsErrors, so a finding fails the invocation; grepping the
+      # log for first-party paths instead would miss exactly the failures that
+      # matter, since a finding in a dependency header still fails the run.
       - name: Run clang-tidy
         run: |
+          clang-tidy --version
           status=0
+          failed=""
           while IFS= read -r file; do
             echo "--- $file"
-            clang-tidy -p build-tidy --quiet "$file" || status=1
+            if ! clang-tidy -p build-tidy --quiet "$file"; then
+              status=1
+              failed="$failed $file"
+            fi
           done < <(find src -name '*.cpp' | sort)
           if [ "$status" -ne 0 ]; then
-            echo "::error::clang-tidy reported findings (see the log above)"
+            echo "::error::clang-tidy reported findings in:$failed"
           fi
           exit $status
         shell: bash

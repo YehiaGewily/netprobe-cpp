@@ -215,8 +215,7 @@ flowchart LR
 
 ## Contributing
 
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions on each platform, how to run the same checks CI runs (tests, sanitizers, clang-tidy, fuzzing), and what review looks for in a tool that parses hostile input. It also lists some good first issues.
 
 ## License
 

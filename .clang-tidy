@@ -28,11 +28,27 @@ Checks: >
 
 # The tree is clean under this configuration, so anything new is a
 # regression and should fail the build rather than scroll past in a log.
+#
+# This makes HeaderFilterRegex load-bearing rather than cosmetic: any header
+# the filter admits can fail the build, which is why the filter below names
+# first-party directories explicitly instead of pattern-matching on "src" or
+# "include". It also means a clang-tidy version bump can surface new findings
+# — that is intended, and the fix is to address them, not to widen the filter.
 WarningsAsErrors: '*'
 
-# Only first-party headers. Without this, findings from the FetchContent'd
-# ImGui, Mbed TLS, and libmaxminddb headers drown out our own.
-HeaderFilterRegex: '.*[/\\](src|include)[/\\].*'
+# Only first-party headers.
+#
+# This must name the source subdirectories explicitly. The obvious pattern —
+# matching any path containing "src" or "include" — also matches the
+# FetchContent trees, because a dependency checked out to
+# _deps/mbedtls-src/include/mbedtls/aes.h contains BOTH. Combined with
+# WarningsAsErrors below, that turned every macro-parentheses finding in Mbed
+# TLS, GLFW, and NFD into a build failure.
+#
+# There are no headers directly in src/, and the repository's include/
+# directory is empty, so enumerating the four module directories covers all
+# first-party headers and cannot match a dependency.
+HeaderFilterRegex: '.*[/\\]src[/\\](capture|cli|core|ui)[/\\]'
 
 # clang-tidy must not rewrite formatting; that belongs to the author.
 FormatStyle: none

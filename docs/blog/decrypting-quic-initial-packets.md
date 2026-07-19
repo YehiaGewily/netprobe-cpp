@@ -14,6 +14,31 @@ Very few people write this up accessibly. The RFCs describe it precisely and unh
 
 The five stages:
 
+```
+        UDP payload
+             |
+   [0] long header parse ....... find version + Destination Connection ID
+             |                    QuicParser.cpp:322  (parseInitial)
+             v
+   [1] key derivation .......... HKDF-Extract(salt, DCID) -> initial_secret
+             |                    HKDF-Expand-Label -> key / iv / hp
+             |                    QuicParser.cpp:117  (deriveClientInitialKeys)
+             v
+   [2] header protection ....... AES-128-ECB over a ciphertext sample
+             |                    -> unmask first byte + packet number
+             |                    QuicParser.cpp:136  (removeHeaderProtection)
+             v
+   [3] payload decryption ...... AES-128-GCM, nonce = iv XOR packet number
+             |                    AAD = the unprotected header
+             |                    QuicParser.cpp:163  (decryptPayload)
+             v
+   [4] frame walk .............. collect CRYPTO frames by offset
+             |                    QuicParser.cpp:194  (collectCryptoFrames)
+             v
+   [5] reassembly + parse ...... stitch fragments across packets, read SNI
+                                  QuicTracker.cpp   /  QuicParser.cpp:258
+```
+
 1. Parse enough of the long header to find the Destination Connection ID
 2. Derive Initial secrets from that DCID (HKDF-Extract, then HKDF-Expand-Label)
 3. Remove header protection to recover the packet number
@@ -38,11 +63,14 @@ A QUIC Initial packet uses the *long header* form. The first byte tells you whic
 Bit 7 set means long header; bit 6 is the "fixed bit", always 1. NetProbe's cheap pre-filter checks exactly those two bits before doing any work:
 
 ```cpp
+// QuicParser.cpp:249
 bool QuicParser::looksLikeLongHeader(const uint8_t* data, size_t size) {
     // Long header (bit 7) + fixed bit (bit 6).
     ...
 }
 ```
+
+[`QuicParser.cpp:249`](../../src/core/QuicParser.cpp#L249)
 
 This matters for performance. Every UDP packet on the wire gets this test; only the ones that pass go anywhere near the crypto.
 
@@ -62,6 +90,7 @@ Two versions matter today:
 **The v2 trap.** QUIC v2 is not a cosmetic revision of v1. It uses a *different Initial salt* and *different key-derivation labels*. A v1-only parser does not error on v2 — it derives the wrong keys, AES-GCM authentication fails, and the packet is silently discarded as "not decryptable." You get no SNI and no indication why. NetProbe carries both parameter sets:
 
 ```cpp
+// QuicParser.cpp:35, selected at QuicParser.cpp:43
 struct VersionParams {
     const uint8_t* salt;
     const char* keyLabel;
@@ -73,6 +102,8 @@ struct VersionParams {
 // v1: {kInitialSaltV1, "quic key", "quic iv", "quic hp", 0x00}
 // v2: {kInitialSaltV2, "quicv2 key", "quicv2 iv", "quicv2 hp", 0x10}
 ```
+
+Salts at [`QuicParser.cpp:20`](../../src/core/QuicParser.cpp#L20) (v1) and [`QuicParser.cpp:28`](../../src/core/QuicParser.cpp#L28) (v2); selection at [`QuicParser.cpp:43`](../../src/core/QuicParser.cpp#L43).
 
 Note the last field. The two-bit packet *type* encoding also changed between versions: an Initial is `0b00` in v1 and `0b01` in v2. Hardcode the v1 value and you will reject every v2 Initial before you even get to the keys.
 
@@ -108,7 +139,27 @@ hp  = HKDF-Expand-Label(client_initial_secret, "quic hp",  "", 16)   // header p
 
 In code, that whole chain is:
 
+```
+   initial_salt (RFC constant)      DCID (from the packet, plaintext)
+             |                                  |
+             +----------- HKDF-Extract ---------+
+                              |
+                       initial_secret (32)
+                              |
+                  HKDF-Expand-Label "client in"
+                              |
+                   client_initial_secret (32)
+                              |
+        +---------------------+---------------------+
+        |                     |                     |
+   "quic key"             "quic iv"             "quic hp"
+        |                     |                     |
+     key (16)              iv (12)               hp (16)
+   AES-128-GCM          nonce baseline      header protection
+```
+
 ```cpp
+// QuicParser.cpp:117
 bool deriveClientInitialKeys(const VersionParams& params,
                              const uint8_t* dcid, size_t dcidLen, InitialKeys& out) {
     uint8_t initialSecret[32];
@@ -124,6 +175,8 @@ bool deriveClientInitialKeys(const VersionParams& params,
 }
 ```
 
+[`QuicParser.cpp:117`](../../src/core/QuicParser.cpp#L117)
+
 ### HKDF-Expand-Label is not HKDF-Expand
 
 This trips people up. `HKDF-Expand-Label` is a TLS 1.3 construction (RFC 8446 §7.1) that builds a structured `info` parameter before calling ordinary HKDF-Expand:
@@ -138,7 +191,19 @@ struct {
 
 The literal ASCII prefix `"tls13 "` — with the trailing space — is prepended to every label. QUIC uses the TLS 1.3 KDF unmodified, so `"quic key"` is really `"tls13 quic key"` on the wire:
 
+```
+   HkdfLabel info bytes:
+
+   +--------+--------+--------+---------------------------+--------+
+   | len hi | len lo | lblLen | "tls13 " || label         | 0x00   |
+   +--------+--------+--------+---------------------------+--------+
+     output length     length   prefix is literal ASCII,    empty
+     (big endian)      of the   including the trailing      context
+                       label    space
+```
+
 ```cpp
+// QuicParser.cpp:95
 static constexpr char kPrefix[] = "tls13 ";
 ...
 info[p++] = static_cast<uint8_t>(outLen >> 8);
@@ -148,6 +213,8 @@ std::memcpy(info + p, kPrefix, kPrefixLen); p += kPrefixLen;
 std::memcpy(info + p, label, labelLen);     p += labelLen;
 info[p++] = 0x00;  // empty context
 ```
+
+[`QuicParser.cpp:95`](../../src/core/QuicParser.cpp#L95)
 
 Forget the prefix, or the two-byte big-endian output length, or the trailing empty-context byte, and you get 16 perfectly valid-looking bytes that decrypt nothing. There is no diagnostic. This is the single most common place to lose an afternoon.
 
@@ -166,6 +233,20 @@ QUIC resolves this with **header protection**: a separate cipher pass that masks
 
 The trick is that the sample is taken at a *fixed* offset — 4 bytes past where the packet number starts, as though the packet number were always the maximum 4 bytes:
 
+```
+   ... | packet number (1-4 bytes, protected) | payload ...
+       ^                                      
+       pnOffset                               
+       |<------- 4 bytes ------->|<--- 16-byte HP sample --->|
+
+   AES-128-ECB(hp_key, sample) -> mask[16], of which 5 bytes are used:
+
+       mask[0]  -> XOR into first byte (low nibble, long header)
+                   the unmasked low 2 bits give the packet number length N
+       mask[1..N] -> XOR into the N packet-number bytes
+```
+
+
 ```cpp
 // The HP sample is 16 bytes at offset (pnOffset + 4), assuming the
 // maximum 4-byte packet number.
@@ -174,6 +255,7 @@ The trick is that the sample is taken at a *fixed* offset — 4 bytes past where
 Encrypt that 16-byte sample with AES-128-ECB under the `hp` key. The output is a 5-byte mask:
 
 ```cpp
+// QuicParser.cpp:136
 mbedtls_aes_setkey_enc(&ctx, keys.hp, 128);
 mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, sample, mask);
 
@@ -184,6 +266,8 @@ for (size_t i = 0; i < outPnLen; ++i) {
     pnBytes[i] ^= mask[i + 1];
 }
 ```
+
+[`QuicParser.cpp:136`](../../src/core/QuicParser.cpp#L136)
 
 `mask[0]` unmasks the first byte — the low **nibble** for a long header, the low 5 bits for a short header. Once the first byte is clear, its low two bits give the packet number length, and `mask[1..4]` unmask that many packet-number bytes.
 
@@ -197,7 +281,24 @@ Now the payload. QUIC uses AEAD_AES_128_GCM for Initial packets, with two detail
 
 **The nonce is the IV XOR the packet number**, big-endian and right-aligned into 12 bytes:
 
+```
+   iv  (12 bytes, from HKDF)   b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11
+   packet number (8 bytes)                 XOR  right-aligned  ->  b4..b11
+                                           ------------------------------
+   nonce (12 bytes)            b0 b1 b2 b3 (b4^pn0) ...      (b11^pn7)
+
+   AEAD layout of the packet:
+
+   +--------------------------------+-------------------+------------+
+   | header, header-protection      | ciphertext        | GCM tag    |
+   | REMOVED  (first byte .. pn)    |                   | (16 bytes) |
+   +--------------------------------+-------------------+------------+
+   |<---------- AAD --------------->|<-- decrypted -->|
+```
+
+
 ```cpp
+// QuicParser.cpp:163
 uint8_t nonce[12];
 std::memcpy(nonce, keys.iv, 12);
 for (int i = 0; i < 8; ++i) {
@@ -219,6 +320,8 @@ mbedtls_gcm_auth_decrypt(&ctx, ciphertextLen,
     ciphertext, outPlaintext.data());
 ```
 
+[`QuicParser.cpp:163`](../../src/core/QuicParser.cpp#L163)
+
 This authentication check is doing real work for an analyzer, not just crypto hygiene. Because Initial keys are derivable by anyone, a passive parser will happily attempt decryption on any UDP packet whose first two bits look like a long header. The GCM tag is what distinguishes an actual QUIC Initial from a coincidence. **A failed tag is not an error to report — it is the normal answer for a packet that was never QUIC.**
 
 ---
@@ -232,7 +335,28 @@ Decryption gives you a QUIC frame sequence, not a ClientHello. Walk it, collecti
 - `0x02`/`0x03` ACK
 - `0x06` CRYPTO — carries `offset` and `length` varints, then the TLS bytes
 
+The frame walk is [`QuicParser.cpp:194`](../../src/core/QuicParser.cpp#L194).
+
 Each CRYPTO frame carries an **offset**. That is the whole story: the ClientHello is a byte stream that may be split across multiple frames, in multiple packets, arriving in any order.
+
+```
+   Initial packet #1 (decrypted)        Initial packet #2 (decrypted)
+   +----------------------------+       +----------------------------+
+   | PADDING ...                |       | CRYPTO off=1100 len=800    |
+   | CRYPTO  off=0   len=1100   |       | PADDING ...                |
+   +----------------------------+       +----------------------------+
+              |                                      |
+              +------------------+-------------------+
+                                 v
+              reassembly buffer, keyed by DCID, ordered by offset
+              +--------------------------------------------+
+              | 0 .......................... 1900 (bytes)  |
+              +--------------------------------------------+
+                                 |
+                                 v
+                    one contiguous TLS ClientHello
+```
+
 
 For years you could ignore this. A ClientHello fit comfortably in one Initial packet, so a parser that grabbed the first CRYPTO frame and parsed it worked essentially always.
 
@@ -243,22 +367,32 @@ So a parser that reads only the first CRYPTO frame does not fail loudly. It sile
 NetProbe handles it in [`QuicTracker`](../../src/core/QuicTracker.cpp), which buffers fragments per connection, keyed by the Destination Connection ID, and reassembles by offset until the TLS record is complete. Because it holds state across packets from the network, it is bounded on every axis:
 
 ```cpp
+// QuicTracker.hpp:33-35
 static constexpr size_t kMaxStreamBytes = size_t{64} * 1024;
+static constexpr int64_t kConnectionTimeoutMicroseconds = 10'000'000;
+static constexpr size_t kMaxTrackedConnections = 1'024;
 ```
 
-with a cap on tracked connections and a timeout that evicts handshakes that never complete. An attacker who can send packets should not be able to make an analyzer allocate without limit — a reassembler that trusts offsets is a memory-exhaustion primitive wearing a parser costume.
+[`QuicTracker.hpp:33`](../../src/core/QuicTracker.hpp#L33)
+
+A cap on tracked connections and a timeout evict handshakes that never complete. An attacker who can send packets should not be able to make an analyzer allocate without limit — a reassembler that trusts offsets is a memory-exhaustion primitive wearing a parser costume.
 
 The frame walk applies the same suspicion:
 
 ```cpp
+// QuicParser.cpp:196
 constexpr uint64_t kSaneCryptoBound = 1u << 24;
 ```
+
+[`QuicParser.cpp:196`](../../src/core/QuicParser.cpp#L196)
 
 A CRYPTO frame claiming a 16 MB length is not a large handshake; it is an attack or a corrupt packet, and either way the right move is to stop.
 
 ---
 
 ## Stage 5: reading the SNI
+
+The ClientHello parse is [`QuicParser.cpp:258`](../../src/core/QuicParser.cpp#L258).
 
 With a contiguous ClientHello you are back in ordinary TLS 1.3 territory: skip `legacy_version` (2 bytes) and `random` (32), then the variable-length session ID, cipher suites, and compression methods, to reach the extension list. Find extension type `0x0000`, server_name, and read the first `host_name` entry.
 
@@ -288,4 +422,25 @@ The only approach that holds up is deriving known-good vectors from the RFC and 
 
 ---
 
-*The implementation described here is in [`src/core/QuicParser.cpp`](../../src/core/QuicParser.cpp) and [`src/core/QuicTracker.cpp`](../../src/core/QuicTracker.cpp). Corrections welcome — particularly from anyone who has fought the v2 label change.*
+## Source index
+
+Every stage above, in the order it executes:
+
+| Stage | Function | Location |
+| --- | --- | --- |
+| Pre-filter | `looksLikeLongHeader` | [QuicParser.cpp:249](../../src/core/QuicParser.cpp#L249) |
+| 0 — header parse | `parseInitial` | [QuicParser.cpp:322](../../src/core/QuicParser.cpp#L322) |
+| 0 — version params | `versionParams` | [QuicParser.cpp:43](../../src/core/QuicParser.cpp#L43) |
+| 0 — v1 salt | `kInitialSaltV1` | [QuicParser.cpp:20](../../src/core/QuicParser.cpp#L20) |
+| 0 — v2 salt | `kInitialSaltV2` | [QuicParser.cpp:28](../../src/core/QuicParser.cpp#L28) |
+| 1 — expand-label | `hkdfExpandLabel` | [QuicParser.cpp:95](../../src/core/QuicParser.cpp#L95) |
+| 1 — key schedule | `deriveClientInitialKeys` | [QuicParser.cpp:117](../../src/core/QuicParser.cpp#L117) |
+| 2 — header protection | `removeHeaderProtection` | [QuicParser.cpp:136](../../src/core/QuicParser.cpp#L136) |
+| 3 — AEAD | `decryptPayload` | [QuicParser.cpp:163](../../src/core/QuicParser.cpp#L163) |
+| 4 — frame walk | `collectCryptoFrames` | [QuicParser.cpp:194](../../src/core/QuicParser.cpp#L194) |
+| 4 — sanity bound | `kSaneCryptoBound` | [QuicParser.cpp:196](../../src/core/QuicParser.cpp#L196) |
+| 5 — reassembly | `QuicTracker::feed` | [QuicTracker.hpp:26](../../src/core/QuicTracker.hpp#L26) |
+| 5 — reassembly bounds | `kMaxStreamBytes` et al. | [QuicTracker.hpp:33](../../src/core/QuicTracker.hpp#L33) |
+| 5 — ClientHello parse | `sniFromClientHello` | [QuicParser.cpp:258](../../src/core/QuicParser.cpp#L258) |
+
+*Line numbers refer to the commit this post was written against; the functions are stable even if the lines drift. Corrections welcome — particularly from anyone who has fought the v2 label change.*
