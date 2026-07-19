@@ -1,9 +1,6 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
 #include "ui/EmbeddedIcon.hpp"
-#include "core/DNSParser.hpp"
-#include "core/ProtocolParser.hpp"
-#include "core/QuicParser.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_glfw.h"
@@ -13,18 +10,30 @@
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace ui {
 
     GuiLayer::GuiLayer(core::PacketQueue& queue) : m_queue(queue) {}
 
     GuiLayer::~GuiLayer() {
-        captureWindowGeometry();
-        saveSettings();
+        // Persisting preferences touches the filesystem, and an exception
+        // escaping a destructor terminates the process. Losing the saved
+        // window geometry is an acceptable outcome; crashing on exit is not.
+        try {
+            captureWindowGeometry();
+            saveSettings();
+        } catch (...) {
+            // Reported with fputs rather than iostreams: this runs during
+            // shutdown, where anything that can throw defeats the point.
+            std::fputs("NetProbe: could not save window geometry or preferences.\n", stderr);
+        }
+
         if (m_window) {
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -65,7 +74,7 @@ namespace ui {
             height = static_cast<int>(height * scaleY);
         }
 
-        m_window = glfwCreateWindow(width, height, "NetProbe  -  Network Analyzer", NULL, NULL);
+        m_window = glfwCreateWindow(width, height, "NetProbe  -  Network Analyzer", nullptr, nullptr);
         if (!m_window) {
             glfwTerminate();
             return false;
@@ -127,7 +136,7 @@ namespace ui {
 
         m_nfdInitialized = NFD_Init() == NFD_OKAY;
         if (!m_nfdInitialized) {
-            std::cerr << "Native file dialog is unavailable: " << NFD_GetError() << std::endl;
+            std::cerr << "Native file dialog is unavailable: " << NFD_GetError() << '\n';
         }
 
         IMGUI_CHECKVERSION();
@@ -200,7 +209,11 @@ namespace ui {
                 }
             } else if (key == "window") {
                 int x = 0, y = 0, w = 0, h = 0, maximized = 0;
-                if (std::sscanf(value.c_str(), "%d %d %d %d %d", &x, &y, &w, &h, &maximized) == 5) {
+                // Extracted rather than scanf'd: type-safe, and it avoids the
+                // MSVC deprecation of sscanf without reaching for the
+                // Windows-only sscanf_s.
+                std::istringstream fields(value);
+                if (fields >> x >> y >> w >> h >> maximized) {
                     m_savedWindowX = x;
                     m_savedWindowY = y;
                     m_savedWindowW = w;
@@ -457,91 +470,17 @@ namespace ui {
             auto packetOpt = m_queue.try_pop();
             if (!packetOpt) break;
 
-            auto parsed = core::ProtocolParser::parse(*packetOpt);
-
-            // Recover an SNI that the single-packet parse could not see: a
-            // ClientHello split across TCP segments, or a QUIC ClientHello split
-            // across Initial packets. Both are routine now that post-quantum key
-            // shares have pushed the message past one MTU.
-            if (parsed.sni.empty() && parsed.payloadLength > 0
-                && parsed.payloadOffset < packetOpt->payload.size()) {
-                const uint8_t* payload = packetOpt->payload.data() + parsed.payloadOffset;
-                const size_t payloadLength = std::min(parsed.payloadLength,
-                    packetOpt->payload.size() - parsed.payloadOffset);
-
-                std::optional<std::string> recovered;
-                if (parsed.protocol == "TCP") {
-                    recovered = m_tlsReassembler.feed(parsed, payload, payloadLength);
-                } else if (parsed.protocol == "UDP"
-                    && core::QuicParser::looksLikeLongHeader(payload, payloadLength)) {
-                    recovered = m_quicTracker.feed(payload, payloadLength, parsed.timestamp);
-                }
-                if (recovered && !recovered->empty()) {
-                    parsed.sni = *recovered;
-                    if (const std::string named = core::ProtocolParser::identifyService(*recovered);
-                        !named.empty()) {
-                        parsed.service = named;
-                    }
-                }
-            }
-
-            if (const auto dnsResponse = core::DNSParser::parseResponse(*packetOpt, parsed)) {
-                ++m_plaintextDnsResponses;
-                if (dnsResponse->encryptedClientHelloAdvertised) m_echAdvertised = true;
-                for (const auto& answer : dnsResponse->answers) {
-                    switch (answer.type) {
-                    case core::DNSRecordType::A:
-                    case core::DNSRecordType::AAAA: {
-                        const std::string& hostname = dnsResponse->queryName.empty()
-                            ? answer.name
-                            : dnsResponse->queryName;
-                        m_hostnameCache.store(answer.value, hostname);
-                        m_flowAggregator.setHostnameForAddress(answer.value, hostname);
-                        break;
-                    }
-                    case core::DNSRecordType::PTR: {
-                        // Reverse answers name devices that never appear in a
-                        // forward lookup — printers, NAS boxes, the router.
-                        if (const auto address = core::DNSParser::reverseNameToAddress(answer.name)) {
-                            m_hostnameCache.store(*address, answer.value);
-                            m_flowAggregator.setHostnameForAddress(*address, answer.value);
-                        }
-                        break;
-                    }
-                    default:
-                        break;
-                    }
-                }
-            }
-
-            if (parsed.service == "DNS-over-HTTPS" || parsed.service == "DNS-over-TLS"
-                || parsed.service == "DNS-over-QUIC") {
-                ++m_encryptedDnsPackets;
-            }
-
-            std::string hostname;
-            if (!parsed.sni.empty()) {
-                hostname = parsed.sni;
-            } else if (!parsed.hostname.empty()) {
-                hostname = parsed.hostname;
-            } else if (const auto destinationHostname = m_hostnameCache.lookup(parsed.dstIP)) {
-                hostname = *destinationHostname;
-            } else if (const auto sourceHostname = m_hostnameCache.lookup(parsed.srcIP)) {
-                hostname = *sourceHostname;
-            }
-            // Resolve the owning process now, while the socket is almost
-            // certainly still in the OS table; both the flow and the packet
-            // record cache it so the name survives after a short-lived
-            // connection closes.
-            std::string process = m_processResolver.lookup(parsed);
-            m_flowAggregator.update(parsed, hostname, process);
+            // Decode, recover cross-packet SNI, harvest DNS answers, attribute
+            // the owning process, and fold the packet into its flow.
+            auto analyzed = m_session.feed(*packetOpt);
 
             // Keep the visual history bounded while retaining all-time counters separately.
             if (m_packetHistory.size() >= maxPacketHistory) {
                 m_packetHistory.pop_front();
                 if (m_selectedPacketIndex >= 0) --m_selectedPacketIndex;
             }
-            m_packetHistory.push_back({*packetOpt, std::move(parsed), std::move(process)});
+            m_packetHistory.push_back({*packetOpt, std::move(analyzed.parsed),
+                std::move(analyzed.process)});
             ++m_packetHistoryVersion;
             const core::ParsedPacket& stored = m_packetHistory.back().parsed;
 
@@ -688,13 +627,7 @@ namespace ui {
         m_appCounts.clear();
         m_protocolCounts.clear();
         m_protocolBytes.clear();
-        m_hostnameCache.clear();
-        m_flowAggregator.clear();
-        m_tlsReassembler.clear();
-        m_quicTracker.clear();
-        m_plaintextDnsResponses = 0;
-        m_encryptedDnsPackets = 0;
-        m_echAdvertised = false;
+        m_session.clear();
         m_packetFlowFilter.reset();
         m_flowRateHistory.Erase();
         m_flowRateKey.reset();
@@ -729,7 +662,7 @@ namespace ui {
             openPcapFile(selectedPath);
             NFD_FreePathU8(selectedPath);
         } else if (result == NFD_ERROR) {
-            std::cerr << "Unable to open file dialog: " << NFD_GetError() << std::endl;
+            std::cerr << "Unable to open file dialog: " << NFD_GetError() << '\n';
         }
     }
 
@@ -972,8 +905,8 @@ namespace ui {
         // ClientHello SNI, and browsers reuse one connection for every lookup,
         // so a handful of sightings can already mean all resolution is hidden.
         constexpr uint64_t minimumEvidence = 3;
-        return m_encryptedDnsPackets >= minimumEvidence
-            && m_encryptedDnsPackets > m_plaintextDnsResponses * 2;
+        return m_session.encryptedDnsPackets() >= minimumEvidence
+            && m_session.encryptedDnsPackets() > m_session.plaintextDnsResponses() * 2;
     }
 
     void GuiLayer::renderEncryptedDnsNotice() {
@@ -1001,7 +934,7 @@ namespace ui {
         ImGui::SameLine();
         ImGui::TextColored(kText1, "Encrypted DNS in use.");
         ImGui::SameLine();
-        ImGui::TextColored(kText2, m_echAdvertised
+        ImGui::TextColored(kText2, m_session.echAdvertised()
             ? "Name resolution is hidden, and Encrypted Client Hello was advertised, so some hostnames will show only an IP."
             : "Name resolution is not visible on the wire, so hostnames come only from TLS/QUIC SNI and may be incomplete.");
 

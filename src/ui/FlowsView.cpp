@@ -1,6 +1,7 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
 #include "core/FlowAggregator.hpp"
+#include "core/FlowExporter.hpp"
 #include "core/GeoIPResolver.hpp"
 #include "imgui.h"
 #include "implot.h"
@@ -18,22 +19,28 @@ namespace ui {
 
     namespace {
 
-        std::string csvEscape(const std::string& value) {
-            if (value.find_first_of(",\"\n") == std::string::npos) return value;
-            std::string escaped = "\"";
-            for (char c : value) {
-                if (c == '"') escaped += "\"\"";
-                else escaped += c;
-            }
-            escaped += '"';
-            return escaped;
+        using core::organizationLabel;
+
+        uint64_t retransmissionsOf(const core::Flow& flow) {
+            return flow.retransmissionsUp + flow.retransmissionsDown;
         }
 
-        std::string organizationLabelFor(const core::GeoIPInfo& info) {
-            if (info.organization.empty()) return std::string{"-"};
-            return info.asn == 0
-                ? info.organization
-                : std::format("AS{} {}", info.asn, info.organization);
+        uint64_t outOfOrderOf(const core::Flow& flow) {
+            return flow.outOfOrderUp + flow.outOfOrderDown;
+        }
+
+        // Retransmissions as a share of the flow's packets. A rate reads
+        // better than a raw count: 20 retransmits out of 50 packets is a
+        // broken connection, out of 500,000 it is noise.
+        //
+        // Reordering is deliberately kept out of this number. The two have
+        // different causes — loss versus multipath or queueing — and merging
+        // them produces a figure that cannot be acted on. Out-of-order counts
+        // live in the tooltip and the detail pane.
+        double retransmissionRateOf(const core::Flow& flow) {
+            if (flow.packets == 0) return 0.0;
+            return 100.0 * static_cast<double>(retransmissionsOf(flow))
+                / static_cast<double>(flow.packets);
         }
 
         // Two-column key/value row used by the flow detail pane.
@@ -55,43 +62,8 @@ namespace ui {
     }
 
     bool GuiLayer::exportFlowsCsv(const std::string& path, std::string& error) {
-        const auto flows = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
-        std::ofstream file(path, std::ios::trunc);
-        if (!file) {
-            error = "Unable to open the destination file for writing.";
-            return false;
-        }
-        file << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,process,country,organization,"
-                "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec\n";
-        for (const auto& flow : flows) {
-            const auto geo = m_geoIPResolver.lookup(flow.key.dstIP);
-            const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
-            const double rttMs = flow.initialRttMicroseconds > 0
-                ? static_cast<double>(flow.initialRttMicroseconds) / 1000.0
-                : 0.0;
-            const int64_t durationSec = std::max<int64_t>(0, (flow.lastSeen - flow.firstSeen) / 1'000'000);
-            file << csvEscape(host) << ','
-                 << flow.key.srcIP << ','
-                 << flow.key.srcPort << ','
-                 << flow.key.dstIP << ','
-                 << flow.key.dstPort << ','
-                 << flow.key.protocol << ','
-                 << csvEscape(flow.service) << ','
-                 << csvEscape(flow.process) << ','
-                 << csvEscape(geo.country) << ','
-                 << csvEscape(organizationLabelFor(geo)) << ','
-                 << flow.packets << ','
-                 << flow.bytesUp << ','
-                 << flow.bytesDown << ','
-                 << std::format("{:.1f}", flow.rateBytesPerSecond) << ','
-                 << std::format("{:.2f}", rttMs) << ','
-                 << durationSec << '\n';
-        }
-        if (!file.good()) {
-            error = "Writing the CSV file failed.";
-            return false;
-        }
-        return true;
+        return core::FlowExporter::writeCsv(m_session.flows(currentUnixTimeMicroseconds()),
+            path, error, &m_geoIPResolver);
     }
 
     // Refresh the shared flow snapshot on a 0.5s cadence. Copying every flow,
@@ -102,7 +74,7 @@ namespace ui {
         if (m_lastFlowsRefresh >= 0.0 && now - m_lastFlowsRefresh < 0.5) return;
         m_lastFlowsRefresh = now;
 
-        m_flowsCache = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+        m_flowsCache = m_session.flows(currentUnixTimeMicroseconds());
         m_activeFlowCount = m_flowsCache.size();
 
         // The geo cache persists across refreshes so each destination IP is
@@ -132,8 +104,8 @@ namespace ui {
             const auto& rightGeo = geoFor(right.key.dstIP);
             const std::string leftCountry = leftGeo.country.empty() ? "-" : leftGeo.country;
             const std::string rightCountry = rightGeo.country.empty() ? "-" : rightGeo.country;
-            const std::string leftOrganization = organizationLabelFor(leftGeo);
-            const std::string rightOrganization = organizationLabelFor(rightGeo);
+            const std::string leftOrganization = organizationLabel(leftGeo);
+            const std::string rightOrganization = organizationLabel(rightGeo);
             const uint64_t leftBytes = left.bytesUp + left.bytesDown;
             const uint64_t rightBytes = right.bytesUp + right.bytesDown;
 
@@ -157,9 +129,15 @@ namespace ui {
                 comparison = lr < rr ? -1 : lr > rr ? 1 : 0;
                 break;
             }
-            case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
+            case 9: {
+                const double leftRate = retransmissionRateOf(left);
+                const double rightRate = retransmissionRateOf(right);
+                comparison = leftRate < rightRate ? -1 : leftRate > rightRate ? 1 : 0;
+                break;
+            }
+            case 10: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
                 : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
-            case 10: comparison = left.process.compare(right.process); break;
+            case 11: comparison = left.process.compare(right.process); break;
             default: break;
             }
             if (comparison == 0) comparison = leftHost.compare(rightHost);
@@ -205,7 +183,7 @@ namespace ui {
             detailRow("Protocol", flow.key.protocol);
             detailRow("Process", flow.process);
             detailRow("Country", geo.country.empty() ? "-" : geo.country);
-            detailRow("Org", organizationLabelFor(geo));
+            detailRow("Org", organizationLabel(geo));
             // Name the direction by its endpoint rather than "up"/"down": for a
             // peer-to-peer flow neither side is the client.
             detailRow(std::format("{} sent", flow.key.srcIP).c_str(), formatBytes(flow.bytesUp));
@@ -219,6 +197,15 @@ namespace ui {
                 detailRow("Init RTT", "");
             }
             detailRow("Duration", formatDuration(flow.firstSeen, flow.lastSeen));
+            if (flow.key.protocol == "TCP") {
+                // Per direction and absolute here: the table already shows the
+                // combined rate, and when diagnosing you need to know which
+                // side is losing packets.
+                detailRow("Retrans", std::format("{} / {}",
+                    flow.retransmissionsUp, flow.retransmissionsDown));
+                detailRow("Reordered", std::format("{} / {}",
+                    flow.outOfOrderUp, flow.outOfOrderDown));
+            }
 
             ImGui::EndTable();
         }
@@ -308,7 +295,7 @@ namespace ui {
             | ImGuiTableFlags_Resizable
             | ImGuiTableFlags_Sortable;
 
-        if (ImGui::BeginTable("FlowsTable", 11, tableFlags)) {
+        if (ImGui::BeginTable("FlowsTable", 12, tableFlags)) {
             ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, scaled(65.0f));
             ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, scaled(180.0f));
@@ -318,6 +305,7 @@ namespace ui {
             ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, scaled(90.0f));
             ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, scaled(90.0f));
             ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, scaled(85.0f));
+            ImGui::TableSetupColumn("Retrans", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, scaled(78.0f));
             ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, scaled(70.0f));
             ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, scaled(130.0f));
             ImGui::TableHeadersRow();
@@ -338,7 +326,7 @@ namespace ui {
                     const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
                     const auto& geoInfo = geoFor(flow.key.dstIP);
                     const std::string country = geoInfo.country.empty() ? "-" : geoInfo.country;
-                    const std::string organization = organizationLabelFor(geoInfo);
+                    const std::string organization = organizationLabel(geoInfo);
                     const uint64_t totalBytes = flow.bytesUp + flow.bytesDown;
                     const bool selected = m_packetFlowFilter && *m_packetFlowFilter == flow.key;
 
@@ -416,9 +404,30 @@ namespace ui {
                         ImGui::TextDisabled("--");
                     }
                     ImGui::TableSetColumnIndex(9);
+                    if (flow.key.protocol != "TCP") {
+                        // Only TCP carries the sequence numbers this is derived from.
+                        ImGui::TextDisabled("--");
+                    } else {
+                        const uint64_t retransmissions = retransmissionsOf(flow);
+                        const double rate = retransmissionRateOf(flow);
+                        // A couple of percent is where a connection stops
+                        // feeling fast, so that is where the colour turns.
+                        const ImVec4& rateColor = rate < 2.0 ? kSuccess
+                                                : rate < 5.0 ? kWarning : kDanger;
+                        ImGui::TextColored(rateColor, "%.1f%%", rate);
+                        if ((retransmissions > 0 || outOfOrderOf(flow) > 0)
+                            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                            ImGui::SetTooltip(
+                                "%llu retransmitted, %llu out of order, of %llu packets",
+                                static_cast<unsigned long long>(retransmissions),
+                                static_cast<unsigned long long>(outOfOrderOf(flow)),
+                                static_cast<unsigned long long>(flow.packets));
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(10);
                     const std::string duration = formatDuration(flow.firstSeen, flow.lastSeen);
                     ImGui::TextUnformatted(duration.c_str());
-                    ImGui::TableSetColumnIndex(10);
+                    ImGui::TableSetColumnIndex(11);
                     if (flow.process.empty()) {
                         ImGui::TextDisabled("--");
                     } else {

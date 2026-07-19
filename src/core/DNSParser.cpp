@@ -148,7 +148,7 @@ namespace core {
                 if (i % 2 == 0) bytes[i / 2] = static_cast<uint8_t>(value << 4);
                 else            bytes[i / 2] = static_cast<uint8_t>(bytes[i / 2] | value);
             }
-            const std::string text = addressToString(AF_INET6, bytes);
+            std::string text = addressToString(AF_INET6, bytes);
             if (text.empty()) return std::nullopt;
             return text;
         }

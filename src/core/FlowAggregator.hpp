@@ -51,6 +51,20 @@ namespace core {
         // True when the transport is an encrypted tunnel (ESP, WireGuard,
         // OpenVPN) and the inner conversation can never be resolved.
         bool encryptedTunnel = false;
+
+        // TCP delivery problems seen from this capture point, split by
+        // direction (Up = sent by the key's `src`). Always zero for non-TCP.
+        //
+        // These are capture-point counts, in the same sense as Wireshark's:
+        // a segment carrying bytes we have already seen is counted as a
+        // retransmission, and one that skips ahead of the expected sequence
+        // as out-of-order. Capturing on the sending host makes them a good
+        // proxy for real loss; capturing mid-path only shows what reached
+        // this vantage point.
+        uint64_t retransmissionsUp = 0;
+        uint64_t retransmissionsDown = 0;
+        uint64_t outOfOrderUp = 0;
+        uint64_t outOfOrderDown = 0;
     };
 
     class FlowAggregator {
@@ -78,9 +92,17 @@ namespace core {
             uint32_t bytes;
         };
 
+        // Highest sequence number seen so far in one direction of a stream.
+        struct DirectionSequence {
+            uint32_t nextExpected = 0;
+            bool valid = false; // false until the first data segment arrives
+        };
+
         struct FlowState {
             Flow flow;
             std::deque<TrafficSample> recentTraffic;
+            DirectionSequence upSequence;
+            DirectionSequence downSequence;
             // Timestamps used to compute the initial three-way-handshake RTT.
             // synTimestamp is the first client→server SYN we saw; syn-ack
             // arrival in the other direction yields the RTT delta.

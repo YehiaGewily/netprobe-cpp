@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,6 +26,30 @@ namespace capture {
         std::vector<DeviceInfo> getAvailableDevices() const;
         void startCapture(const std::string& deviceName);
         bool openFile(const std::string& path);
+
+        // True once a live capture has been started successfully. Note that a
+        // capture which started and then ended (adapter unplugged, end of a
+        // replayed source) still reads as true; this answers "did we get off
+        // the ground", not "is traffic still arriving".
+        bool isCapturing() const { return m_captureThread.joinable(); }
+
+        // Reads an offline capture start to finish, handing each packet to
+        // `onPacket` as it is read.
+        //
+        // Unlike openFile(), packets never pass through the bounded
+        // PacketQueue, which drops its oldest entries once full. A capture
+        // with more packets than the queue holds would otherwise lose the
+        // beginning of the file before anything could consume it — silently
+        // wrong totals, which is unacceptable when the output is an exported
+        // flow table.
+        // `shouldStop`, when supplied, is polled between packets so a long
+        // replay can be interrupted. Stopping early still reports success:
+        // the caller knows how many packets it consumed, and a partial
+        // analysis of a huge capture is a legitimate thing to ask for.
+        bool replayFile(const std::string& path,
+            const std::function<void(const core::PacketData&)>& onPacket,
+            std::string& error,
+            const std::function<bool()>& shouldStop = {});
         bool setFilter(const std::string& filter, std::string& error);
         bool exportSession(const std::string& path, std::string& error) const;
         void stopCapture();

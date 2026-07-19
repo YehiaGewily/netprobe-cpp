@@ -52,7 +52,7 @@ namespace ui {
         if (containsCI(packet.tunnel, needle)) return true;
         if (packet.srcPort != 0 && containsCI(std::format("{}", packet.srcPort), needle)) return true;
         if (packet.dstPort != 0 && containsCI(std::format("{}", packet.dstPort), needle)) return true;
-        if (const auto hostname = m_hostnameCache.lookup(packet.dstIP);
+        if (const auto hostname = m_session.lookupHostname(packet.dstIP);
             hostname && containsCI(*hostname, needle)) return true;
         return false;
     }
@@ -266,7 +266,7 @@ namespace ui {
                         ImGui::TextColored(kText2, "%s", p.sni.c_str());
                     } else if (!p.info.empty()) {
                         ImGui::TextColored(kText2, "%s", p.info.c_str());
-                    } else if (const auto hostname = m_hostnameCache.lookup(p.dstIP)) {
+                    } else if (const auto hostname = m_session.lookupHostname(p.dstIP)) {
                         ImGui::TextColored(kText3, "host");
                         ImGui::SameLine();
                         ImGui::TextColored(kText2, "%s", hostname->c_str());

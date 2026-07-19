@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
 
+# Emit compile_commands.json for clang-tidy and editor tooling. Note that the
+# Visual Studio generator ignores this; use Ninja when you need the database
+# (see the clang-tidy CI job).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # AddressSanitizer + UndefinedBehaviorSanitizer for local debug runs and CI.
 # Clang/GCC only; MSVC ASan has compatibility caveats with the third-party
 # CMake projects we pull in, so we restrict this to non-MSVC compilers.
@@ -26,16 +31,19 @@ if(WIN32)
         message(FATAL_ERROR "Npcap SDK was not found at ${NPCAP_SDK_PATH}. Install the SDK or set NPCAP_SDK_PATH.")
     endif()
 
-    set(NETPROBE_APP_PLATFORM_LIBRARIES ws2_32 iphlpapi dwmapi opengl32)
-    set(NETPROBE_TEST_PLATFORM_LIBRARIES ws2_32)
+    # Split by consumer: CORE libraries back the capture/analysis library (and
+    # therefore also the tests and the headless CLI), while GUI libraries are
+    # needed only by the windowed executable.
+    set(NETPROBE_CORE_PLATFORM_LIBRARIES ws2_32 iphlpapi)
+    set(NETPROBE_GUI_PLATFORM_LIBRARIES dwmapi opengl32)
 else()
     find_path(PCAP_INCLUDE_DIR NAMES pcap.h pcap/pcap.h REQUIRED)
     find_library(PCAP_LIBRARY NAMES pcap REQUIRED)
     find_package(OpenGL REQUIRED)
 
     set(PCAP_LIBRARIES ${PCAP_LIBRARY})
-    set(NETPROBE_APP_PLATFORM_LIBRARIES OpenGL::GL)
-    set(NETPROBE_TEST_PLATFORM_LIBRARIES)
+    set(NETPROBE_CORE_PLATFORM_LIBRARIES)
+    set(NETPROBE_GUI_PLATFORM_LIBRARIES OpenGL::GL)
 endif()
 
 # --- 2. FetchContent Dependencies (Gui Stack) ---
@@ -123,10 +131,59 @@ if(BUILD_TESTING)
 endif()
 
 # --- 3. Source Management ---
-# Gather all source files
-file(GLOB_RECURSE APP_SOURCES 
-    "src/*.cpp" 
-    "src/*.hpp"
+# Sources are listed explicitly rather than globbed: NetProbeTests and the
+# fuzz harnesses select subsets of these files, and a glob silently changing
+# what lands in which target is exactly the kind of surprise that costs an
+# afternoon. Headers are listed too so they appear in IDE project trees.
+set(NETPROBE_CORE_SOURCES
+    src/capture/CaptureEngine.cpp
+    src/capture/LibpcapBackend.cpp
+    src/capture/NpcapBackend.cpp
+    src/core/AnalysisSession.cpp
+    src/core/DNSParser.cpp
+    src/core/FlowAggregator.cpp
+    src/core/FlowExporter.cpp
+    src/core/GeoIPResolver.cpp
+    src/core/ProcessResolver.cpp
+    src/core/ProtocolParser.cpp
+    src/core/QuicParser.cpp
+    src/core/QuicTracker.cpp
+    src/core/TlsReassembler.cpp
+
+    src/capture/CaptureEngine.hpp
+    src/capture/ICaptureBackend.hpp
+    src/capture/PcapPlatform.hpp
+    src/core/AnalysisSession.hpp
+    src/core/DNSParser.hpp
+    src/core/FlowAggregator.hpp
+    src/core/FlowExporter.hpp
+    src/core/GeoIPResolver.hpp
+    src/core/HostnameCache.hpp
+    src/core/LinkType.hpp
+    src/core/NetworkPlatform.hpp
+    src/core/PacketData.hpp
+    src/core/PacketQueue.hpp
+    src/core/ParsedPacket.hpp
+    src/core/ProcessResolver.hpp
+    src/core/ProtocolHeaders.hpp
+    src/core/ProtocolParser.hpp
+    src/core/QuicParser.hpp
+    src/core/QuicTracker.hpp
+    src/core/TlsReassembler.hpp
+)
+
+set(NETPROBE_GUI_SOURCES
+    src/main.cpp
+    src/ui/Dashboard.cpp
+    src/ui/FlowsView.cpp
+    src/ui/GuiLayer.cpp
+    src/ui/PacketDetail.cpp
+    src/ui/PacketView.cpp
+    src/ui/StatsView.cpp
+
+    src/ui/EmbeddedIcon.hpp
+    src/ui/GuiLayer.hpp
+    src/ui/GuiTheme.hpp
 )
 
 # ImGui Backend Wrapper
@@ -152,9 +209,34 @@ set(IMPLOT_SOURCES
     "${implot_SOURCE_DIR}/implot_demo.cpp"
 )
 
-# --- 4. Executable Target ---
+# --- 4. Core Library ---
+# Capture + parsing + analysis, with no dependency on ImGui/GLFW. The GUI, the
+# headless CLI, and the test suite all build on this.
+add_library(NetProbeCore STATIC ${NETPROBE_CORE_SOURCES})
+
+target_include_directories(NetProbeCore PUBLIC
+    include
+    src
+    ${PCAP_INCLUDE_DIR}
+)
+
+target_link_libraries(NetProbeCore PUBLIC
+    maxminddb::maxminddb
+    MbedTLS::mbedcrypto
+    ${PCAP_LIBRARIES}
+    ${NETPROBE_CORE_PLATFORM_LIBRARIES}
+)
+
+# PRIVATE: these configure how core's own sources compile; consumers neither
+# need nor should inherit them.
+target_compile_definitions(NetProbeCore PRIVATE
+    NETPROBE_GEOIP_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    NETPROBE_VERSION="${PROJECT_VERSION}"
+)
+
+# --- 4b. GUI Executable Target ---
 add_executable(NetProbe
-    ${APP_SOURCES}
+    ${NETPROBE_GUI_SOURCES}
     ${IMGUI_BACKEND_SOURCES}
     ${IMGUI_CORE_SOURCES}
     ${IMPLOT_SOURCES}
@@ -169,10 +251,8 @@ if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/resources/netprobe.ico")
 endif()
 
 # --- 5. Include Directories ---
+# src/include/pcap come through NetProbeCore's PUBLIC includes.
 target_include_directories(NetProbe PRIVATE
-    include
-    src
-    ${PCAP_INCLUDE_DIR}
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${implot_SOURCE_DIR}
@@ -180,18 +260,26 @@ target_include_directories(NetProbe PRIVATE
 
 # --- 6. Linking ---
 target_link_libraries(NetProbe PRIVATE
+    NetProbeCore
     glfw
     nfd::nfd
-    maxminddb::maxminddb
-    MbedTLS::mbedcrypto
-    ${PCAP_LIBRARIES}
-    ${NETPROBE_APP_PLATFORM_LIBRARIES}
+    ${NETPROBE_GUI_PLATFORM_LIBRARIES}
 )
 target_compile_definitions(NetProbe PRIVATE
-    NETPROBE_GEOIP_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    NETPROBE_VERSION="${PROJECT_VERSION}"
 )
 
-install(TARGETS NetProbe
+# --- 6b. Headless CLI ---
+# Links NetProbeCore only: no ImGui, GLFW, or OpenGL, so it builds and runs on
+# a machine with no display.
+add_executable(NetProbeCli src/cli/main.cpp)
+target_link_libraries(NetProbeCli PRIVATE NetProbeCore)
+target_compile_definitions(NetProbeCli PRIVATE
+    NETPROBE_VERSION="${PROJECT_VERSION}"
+)
+set_target_properties(NetProbeCli PROPERTIES OUTPUT_NAME "netprobe-cli")
+
+install(TARGETS NetProbe NetProbeCli
     RUNTIME DESTINATION .
     BUNDLE DESTINATION .
 )
@@ -224,32 +312,45 @@ if(BUILD_TESTING)
     enable_testing()
     add_executable(NetProbeTests
         tests/parser_test.cpp
-        src/core/DNSParser.cpp
-        src/core/FlowAggregator.cpp
-        src/core/GeoIPResolver.cpp
-        src/core/ProtocolParser.cpp
-        src/core/QuicParser.cpp
-        src/core/QuicTracker.cpp
-        src/core/TlsReassembler.cpp
-        src/capture/CaptureEngine.cpp
-        src/capture/NpcapBackend.cpp
-        src/capture/LibpcapBackend.cpp
+        tests/analysis_session_test.cpp
+        tests/flow_exporter_test.cpp
+        tests/flow_loss_test.cpp
+        tests/malformed_test.cpp
     )
+    # src/, pcap headers, and the crypto/geo libraries all arrive through
+    # NetProbeCore's PUBLIC usage requirements.
     target_include_directories(NetProbeTests PRIVATE
-        src
         tests
-        ${PCAP_INCLUDE_DIR}
     )
     target_link_libraries(NetProbeTests PRIVATE
+        NetProbeCore
         GTest::gtest_main
-        maxminddb::maxminddb
-        MbedTLS::mbedcrypto
-        ${PCAP_LIBRARIES}
-        ${NETPROBE_TEST_PLATFORM_LIBRARIES}
     )
     target_compile_definitions(NetProbeTests PRIVATE
         LIBMAXMINDDB_TEST_DATA_DIR="${libmaxminddb_SOURCE_DIR}/t/maxmind-db/test-data"
     )
+    # End-to-end CLI checks. These drive the real binary over the generated
+    # sample capture, which is the only coverage of the complete chain from
+    # pcap file through to an exported file.
+    foreach(_netprobe_cli_format json csv)
+        add_test(NAME CliExportsSampleFlowsAs${_netprobe_cli_format}
+            COMMAND ${CMAKE_COMMAND}
+                -DCLI=$<TARGET_FILE:NetProbeCli>
+                -DPCAP=${CMAKE_SOURCE_DIR}/data/sample.pcap
+                -DOUT=${CMAKE_CURRENT_BINARY_DIR}/cli-flows.${_netprobe_cli_format}
+                -DFORMAT=${_netprobe_cli_format}
+                -P ${CMAKE_SOURCE_DIR}/tests/check_cli_export.cmake)
+    endforeach()
+
+    # Usage errors must be distinguishable from runtime failures by exit code,
+    # since that is what a calling script branches on.
+    add_test(NAME CliRejectsMissingSource COMMAND NetProbeCli --output flows.json)
+    set_tests_properties(CliRejectsMissingSource PROPERTIES WILL_FAIL TRUE)
+
+    add_test(NAME CliShowsHelp COMMAND NetProbeCli --help)
+    set_tests_properties(CliShowsHelp PROPERTIES
+        PASS_REGULAR_EXPRESSION "Usage:")
+
     include(GoogleTest)
     # PRE_TEST defers the exe enumeration from build-time to ctest-time. On
     # Windows this matters because the test executable links wpcap.dll
@@ -279,6 +380,13 @@ if(BUILD_FUZZERS)
     target_include_directories(NetProbeFuzzerSeeds PRIVATE tests)
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # NOTE: this target deliberately re-lists its sources instead of
+        # linking NetProbeCore. libFuzzer needs every analyzed translation
+        # unit built with -fsanitize=fuzzer coverage instrumentation, and
+        # NetProbeCore is compiled without it. The list is also a curated
+        # parser-only subset with no libpcap dependency. If you add a parser
+        # to src/core that handles untrusted bytes, add it here too — see
+        # NETPROBE_CORE_SOURCES above.
         add_executable(NetProbeParserFuzzer
             tests/fuzz/parser_fuzzer.cpp
             src/core/DNSParser.cpp
@@ -293,7 +401,7 @@ if(BUILD_FUZZERS)
         )
         target_link_libraries(NetProbeParserFuzzer PRIVATE
             MbedTLS::mbedcrypto
-            ${NETPROBE_TEST_PLATFORM_LIBRARIES}
+            ${NETPROBE_CORE_PLATFORM_LIBRARIES}
         )
         target_compile_options(NetProbeParserFuzzer PRIVATE
             -fsanitize=fuzzer,address,undefined

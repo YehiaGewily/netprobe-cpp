@@ -2,7 +2,16 @@
 
 A real-time and offline network traffic analyzer built with **Modern C++20**, **Npcap/libpcap**, and **Dear ImGui**.
 
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg) ![Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![CI](https://github.com/YehiaGewily/netprobe-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/YehiaGewily/netprobe-cpp/actions/workflows/ci.yml) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg) ![Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+> Every push is built on Windows, Linux, and macOS, run under AddressSanitizer and UndefinedBehaviorSanitizer, checked with clang-tidy, and fuzzed with libFuzzer.
+
+<!--
+  TODO(screenshots): a hero image belongs here — see plans/IMPLEMENTATION_PLAN.md
+  Phase 1. Capture at 1600x900 in the dark theme, save under docs/screenshots/,
+  and reference them here and beside the feature list below.
+-->
+
 
 ## Download
 
@@ -21,10 +30,10 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
   - **DNS/mDNS**: A/AAAA/CNAME, plus **PTR** (names LAN devices that never appear in a forward lookup), SRV, TXT, and **HTTPS/SVCB** records.
 - **Encrypted-DNS visibility**: detects DoH/DoT/DoQ and **Encrypted Client Hello**, and tells you when name resolution has moved off the wire rather than silently showing bare IPs.
 - **Packet detail pane**: click any packet to see a structured Frame → Tunnel → Network → Transport → Application decode plus an `xxd`-style hex dump of the raw bytes.
-- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, service, hostname, owning process, Country, and ASN/organization, with a detail pane and live rate sparkline. Flow keys are canonical, so both directions of a peer-to-peer conversation collapse into a single row.
+- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, **per-flow retransmission and out-of-order rates**, service, hostname, owning process, Country, and ASN/organization, with a detail pane and live rate sparkline. Flow keys are canonical, so both directions of a peer-to-peer conversation collapse into a single row.
 - **Statistics view**: protocol hierarchy, top talkers by bytes, and name-resolution health.
 - **Process resolution**: the *App* column in both the packet list and the flows table shows the owning process on Windows (iphlpapi), Linux (`/proc/net/*` + `/proc/<pid>/fd/`), and macOS (`proc_pidfdinfo`). Flows capture the process while the socket is live, so the name persists after a short-lived connection closes. Running elevated widens coverage to other users' processes.
-- **Filtering and export**: live BPF capture filters such as `tcp port 443`, a separate display filter over captured packets, PCAP export, and flow export to CSV.
+- **Filtering and export**: live BPF capture filters such as `tcp port 443`, a separate display filter over captured packets, PCAP export, and flow export to CSV or JSON.
 - **Light and dark themes**, adjustable UI scale, and keyboard shortcuts — all persisted between runs.
 - **Cross-platform backends**: Npcap on Windows and libpcap on Linux/macOS.
 
@@ -46,7 +55,7 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 - **GeoIP/ASN**: [libmaxminddb](https://github.com/maxmind/libmaxminddb)
 - **File dialogs**: [Native File Dialog Extended](https://github.com/btzy/nativefiledialog-extended)
 - **Build System**: CMake (all third-party deps pinned via `FetchContent`)
-- **Tests / fuzzing**: GoogleTest + libFuzzer harness on `ProtocolParser` and `DNSParser`
+- **Tests / fuzzing / analysis**: GoogleTest + libFuzzer harness on the protocol parsers + clang-tidy
 
 
 ## Prerequisites
@@ -93,7 +102,7 @@ cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
 ## Usage
 
 1. Run the executable from the extracted release ZIP or build output directory.
-2. **No admin? Try the sample first.** The build emits `data/sample.pcap` (mixed ARP / DNS / TLS-SNI traffic with three resolvable hostnames). Open it via **File → Open PCAP…** to exercise the full UI without elevation.
+2. **No admin? Try the sample first.** The build emits `data/sample.pcap` (mixed ARP / DNS / TCP traffic: three resolvable hostnames, each with a full TLS handshake and a measurable RTT). Open it via **File → Open PCAP…** to exercise the full UI without elevation.
 3. **Live capture** usually requires elevated privileges. On Windows:
 
     ```powershell
@@ -105,6 +114,37 @@ cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
 6. **Click a packet row** in *Live Packets* to populate the *Packet Detail* pane with the layered decode and hex dump.
 
 For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in `data/`. See [data/README.md](data/README.md).
+
+## Headless CLI
+
+`netprobe-cli` runs the same capture and analysis pipeline with no window, for servers, CI, and SSH sessions. It ships alongside the GUI in every release ZIP.
+
+```bash
+# List the adapters available for live capture
+netprobe-cli --list-devices
+
+# Replay a capture file and export its flows as JSON
+netprobe-cli -r capture.pcap -o flows.json
+
+# Capture live for 60 seconds, filtered, exporting CSV
+netprobe-cli -i eth0 -f "tcp port 443" --duration 60 -o flows.csv
+
+# Pipe JSON straight into jq
+netprobe-cli -r capture.pcap -o - | jq '.flows[] | select(.bytes_down > 100000)'
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `-r, --read <file>` | Replay an offline capture |
+| `-i, --device <name>` | Capture live from an adapter (needs privileges) |
+| `-f, --filter <bpf>` | BPF capture filter, live capture only |
+| `-o, --output <path>` | Destination file, or `-` for stdout |
+| `--format <json\|csv>` | Override the format inferred from the extension |
+| `--duration <sec>` | Stop after this many seconds |
+| `--packet-count <n>` | Stop after this many packets |
+| `--no-process` | Skip the owning-process lookup |
+
+Ctrl+C stops a live capture and still writes the output. Exit codes are `0` success, `1` usage error, `2` runtime failure, so scripts can tell a bad invocation from a failed capture. Diagnostics go to stderr, which keeps `-o -` output clean for piping.
 
 ## Architecture
 
@@ -153,25 +193,29 @@ flowchart LR
 - **Protocol stack (`src/core/`)**:
   - `LinkType` maps libpcap `DLT_*` values to supported encapsulations, so cooked, loopback, raw-IP, and Ethernet-family captures are decoded intentionally.
   - `ProtocolParser` is the stateless fast path: link layer -> IPv4/IPv6 -> tunnel descent -> transport -> application hints and service classification.
-  - `TlsReassembler` buffers split TCP ClientHellos with size and expiry caps; it is owned by the UI layer because it is stream state.
+  - `TlsReassembler` buffers split TCP ClientHellos with size and expiry caps.
   - `QuicParser` decrypts QUIC v1/v2 Initial packets with mbedTLS and extracts TLS ClientHello data from CRYPTO frames.
   - `QuicTracker` stitches CRYPTO fragments across multiple Initial packets, keyed by connection id.
   - `DNSParser` extracts DNS/mDNS/LLMNR answers, feeds `HostnameCache`, and flags advertised ECH configs.
   - `FlowAggregator` collapses both directions of a conversation into one canonical key, tracks rates and byte totals, and measures initial TCP RTT from SYN/SYN-ACK timing.
   - `GeoIPResolver` and `ProcessResolver` add country/ASN and process ownership where platform data is available.
-- **GUI layer (`src/ui/`)**: `GuiLayer` owns the Dear ImGui dockspace, capture controls, settings, queue drain, stateful reassemblers, DNS name cache, flow aggregator, and bounded packet history. `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView` render those derived models.
+  - `AnalysisSession` drives the whole per-packet pipeline — decode, cross-packet SNI recovery, DNS harvesting, hostname attribution, process lookup, flow aggregation — and owns the stateful reassemblers, the name cache, and the flow table. The GUI and the headless CLI both run this same object, which is what keeps them from drifting apart.
+  - `FlowExporter` serializes a flow snapshot to CSV or JSON.
+- **GUI layer (`src/ui/`)**: `GuiLayer` owns the Dear ImGui dockspace, capture controls, settings, queue drain, and bounded packet history, layered over an `AnalysisSession`. `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView` render those derived models.
+- **Headless CLI (`src/cli/`)**: the same `CaptureEngine` and `AnalysisSession` with no window, exporting flows for scripts and pipelines.
 
 ## Quality
 
-- **60 unit and integration tests** (GoogleTest) covering protocol parsing, link-type handling, tunnel descent, TLS/QUIC ClientHello reassembly, HTTP header extraction, DNS record coverage, canonical flow keying, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures — including an end-to-end test that drives a crafted capture file through the same pipeline the UI runs.
+- **89 unit and integration tests** (GoogleTest) covering protocol parsing, link-type handling, tunnel descent, TLS/QUIC ClientHello reassembly, HTTP header extraction, DNS record coverage, canonical flow keying, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures — including an end-to-end test that drives a crafted capture file through the same pipeline the UI runs, and end-to-end tests that run the real `netprobe-cli` binary over a capture file and validate the exported JSON and CSV.
+- **Adversarial input suite**: 40 named malformed-packet fixtures — headers claiming lengths the buffer does not contain, IPv4 IHL and total-length lies, IPv6 extension-header chains that overrun or self-reference, DNS compression-pointer loops and inflated record counts, truncated TLS records, QUIC connection-ID and token lengths beyond the packet — plus TCP option lengths of zero and options overrunning their header, and an exhaustive check that every prefix of a valid frame parses without crashing. Each fixture pins the degraded result it must produce, so a parser that starts inventing plausible answers fails the build rather than passing quietly. The same fixtures seed the fuzz corpus, taking it to 44 entries.
 - **libFuzzer harness** on `ProtocolParser::parse`, `DNSParser::parseResponse`, and the stateful `TlsReassembler` / `QuicTracker`, across every supported link type, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
 - **AddressSanitizer + UndefinedBehaviorSanitizer** CI job runs the full test suite under ASan/UBSan on every push.
+- **clang-tidy static analysis** in CI over every first-party source, with `WarningsAsErrors` enabled: the tree is clean, so a new finding fails the build rather than scrolling past in a log. Checks are curated for signal — those that fire constantly on idiomatic code are disabled in `.clang-tidy` with the reasoning recorded there, rather than silenced case by case.
 - **Three-platform CI matrix** (Windows / Ubuntu / macOS) builds the app, builds and runs the test suite, and packages release ZIPs via CPack on tag pushes. Windows test runs use a 7-Zip-extracted Npcap user-mode DLL so the kernel-driver install is unnecessary in CI.
 
 ## Contributing
 
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions on each platform, how to run the same checks CI runs (tests, sanitizers, clang-tidy, fuzzing), and what review looks for in a tool that parses hostile input. It also lists some good first issues.
 
 ## License
 

@@ -148,6 +148,55 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-asan -C RelWithDebInfo --output-on-failure
 
+  clang-tidy:
+    name: clang-tidy (static analysis)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+
+      # Ninja rather than the default generator: clang-tidy needs
+      # compile_commands.json, and configuring is enough to produce it
+      # (FetchContent populates its dependencies at configure time).
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-tidy -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+
+      # Analyse first-party sources only. Third-party code arrives through
+      # FetchContent and is not ours to fix; .clang-tidy's HeaderFilterRegex
+      # keeps their headers out of the report as well.
+      # Driving clang-tidy directly rather than through run-clang-tidy, which
+      # is packaged inconsistently across distributions.
+      #
+      # The pass/fail signal is the EXIT CODE, not the output. .clang-tidy
+      # sets WarningsAsErrors, so a finding fails the invocation; grepping the
+      # log for first-party paths instead would miss exactly the failures that
+      # matter, since a finding in a dependency header still fails the run.
+      - name: Run clang-tidy
+        run: |
+          clang-tidy --version
+          status=0
+          failed=""
+          while IFS= read -r file; do
+            echo "--- $file"
+            if ! clang-tidy -p build-tidy --quiet "$file"; then
+              status=1
+              failed="$failed $file"
+            fi
+          done < <(find src -name '*.cpp' | sort)
+          if [ "$status" -ne 0 ]; then
+            echo "::error::clang-tidy reported findings in:$failed"
+          fi
+          exit $status
+        shell: bash
+
   fuzz:
     name: Fuzz parser (60s)
     runs-on: ubuntu-latest

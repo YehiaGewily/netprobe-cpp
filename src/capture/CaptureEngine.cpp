@@ -18,7 +18,7 @@ namespace capture {
     std::vector<DeviceInfo> CaptureEngine::getAvailableDevices() const {
         std::string error;
         auto devices = m_backend->listDevices(error);
-        if (!error.empty()) std::cerr << "Unable to list capture devices: " << error << std::endl;
+        if (!error.empty()) std::cerr << "Unable to list capture devices: " << error << '\n';
         return devices;
     }
 
@@ -30,11 +30,11 @@ namespace capture {
 
         std::string error;
         if (!m_backend->open(deviceName, error)) {
-            std::cerr << "Unable to open adapter " << deviceName << ": " << error << std::endl;
+            std::cerr << "Unable to open adapter " << deviceName << ": " << error << '\n';
             return;
         }
         if (!m_activeFilter.empty() && !m_backend->setFilter(m_activeFilter, error)) {
-            std::cerr << "Unable to apply BPF filter '" << m_activeFilter << "': " << error << std::endl;
+            std::cerr << "Unable to apply BPF filter '" << m_activeFilter << "': " << error << '\n';
             m_backend->close();
             return;
         }
@@ -52,14 +52,14 @@ namespace capture {
 
         std::string error;
         if (!m_backend->openFile(path, error)) {
-            std::cerr << "Unable to open capture file '" << path << "': " << error << std::endl;
+            std::cerr << "Unable to open capture file '" << path << "': " << error << '\n';
             return false;
         }
         m_sessionLinkType.store(m_backend->linkType(), std::memory_order_release);
         if (m_backend->linkType() == core::LinkType::Unsupported) {
             std::cerr << "Capture file '" << path
                       << "' uses an unsupported link-layer type; packets cannot be decoded."
-                      << std::endl;
+                      << '\n';
         }
 
         bool succeeded = true;
@@ -75,10 +75,52 @@ namespace capture {
                 m_backend->close();
                 return succeeded;
             case PacketReadStatus::Error:
-                std::cerr << "Error while reading capture file '" << path << "': " << error << std::endl;
+                std::cerr << "Error while reading capture file '" << path << "': " << error << '\n';
                 succeeded = false;
                 m_backend->close();
                 return succeeded;
+            }
+        }
+    }
+
+    bool CaptureEngine::replayFile(const std::string& path,
+        const std::function<void(const core::PacketData&)>& onPacket, std::string& error,
+        const std::function<bool()>& shouldStop) {
+        stopCapture();
+        m_queue.clear();
+        clearSession();
+        m_currentDevice.clear();
+
+        if (!m_backend->openFile(path, error)) return false;
+
+        m_sessionLinkType.store(m_backend->linkType(), std::memory_order_release);
+        if (m_backend->linkType() == core::LinkType::Unsupported) {
+            error = "the capture uses an unsupported link-layer type; packets cannot be decoded";
+            m_backend->close();
+            return false;
+        }
+
+        while (true) {
+            if (shouldStop && shouldStop()) {
+                m_backend->close();
+                return true;
+            }
+
+            core::PacketData packet;
+            std::string readError;
+            switch (m_backend->nextPacket(packet, readError)) {
+            case PacketReadStatus::Packet:
+                onPacket(packet);
+                break;
+            case PacketReadStatus::Timeout:
+                break;
+            case PacketReadStatus::EndOfFile:
+                m_backend->close();
+                return true;
+            case PacketReadStatus::Error:
+                error = readError;
+                m_backend->close();
+                return false;
             }
         }
     }
@@ -158,7 +200,7 @@ namespace capture {
                 return;
             case PacketReadStatus::Error:
                 if (!m_stopRequested.load(std::memory_order_acquire)) {
-                    std::cerr << "Capture error: " << error << std::endl;
+                    std::cerr << "Capture error: " << error << '\n';
                 }
                 return;
             }

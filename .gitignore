@@ -99,6 +99,10 @@ Thumbs.db
 # --- Agent Workspace Cache ---
 /.agents/
 
+# --- Local Planning Documents ---
+# Implementation plans consumed by AI agents; not part of the shipped repo.
+/plans/
+
 # --- Demo Recording ---
 /docs/record-demo.md
 

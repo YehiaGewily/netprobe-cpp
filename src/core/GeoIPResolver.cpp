@@ -1,9 +1,18 @@
 #include "core/GeoIPResolver.hpp"
 
 #include <filesystem>
+#include <format>
 #include <maxminddb.h>
 
 namespace core {
+
+    std::string organizationLabel(const GeoIPInfo& info) {
+        if (info.organization.empty()) return std::string{"-"};
+        return info.asn == 0
+            ? info.organization
+            : std::format("AS{} {}", info.asn, info.organization);
+    }
+
     namespace {
         std::filesystem::path geoIpDataDirectory() {
 #ifdef NETPROBE_GEOIP_DATA_DIR
@@ -61,8 +70,8 @@ namespace core {
         : GeoIPResolver(geoIpDataDirectory() / "GeoLite2-Country.mmdb",
             geoIpDataDirectory() / "GeoLite2-ASN.mmdb", cacheCapacity) {}
 
-    GeoIPResolver::GeoIPResolver(std::filesystem::path countryDatabasePath,
-        std::filesystem::path asnDatabasePath, size_t cacheCapacity)
+    GeoIPResolver::GeoIPResolver(const std::filesystem::path& countryDatabasePath,
+        const std::filesystem::path& asnDatabasePath, size_t cacheCapacity)
         : m_database(std::make_unique<Database>(countryDatabasePath, asnDatabasePath))
         , m_cacheCapacity(cacheCapacity > 0 ? cacheCapacity : 1) {}
 

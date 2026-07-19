@@ -1,5 +1,6 @@
 #include "PacketBuilders.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -129,7 +130,19 @@ int main(int argc, char** argv) {
     writeSeed(outputDir, "dns_response.bin", dnsResponsePacket());
     writeSeed(outputDir, "arp_request.bin", arpRequestPacket());
     writeSeed(outputDir, "ipv6_udp.bin", ipv6UdpPacket());
+    size_t seedCount = 5;
 
-    std::cout << "Wrote 5 seed packets to " << outputDir.string() << "\n";
+    // Adversarial shapes shared with tests/malformed_test.cpp. Handing these
+    // to libFuzzer as starting points is far cheaper than waiting for it to
+    // rediscover, byte by byte, that a length field can exceed its buffer.
+    for (const auto& testCase : test::malformed::allCases()) {
+        if (testCase.bytes.empty()) continue; // an empty file is not a useful seed
+        std::string filename = "malformed_" + testCase.name + ".bin";
+        std::replace(filename.begin(), filename.end(), '-', '_');
+        writeSeed(outputDir, filename, testCase.bytes);
+        ++seedCount;
+    }
+
+    std::cout << "Wrote " << seedCount << " seed packets to " << outputDir.string() << "\n";
     return 0;
 }

@@ -362,7 +362,7 @@ namespace core {
             p.tcpRst = (tcpFlags & 0x04) != 0;
             p.tcpAck = (tcpFlags & 0x10) != 0;
 
-            const size_t tcpHeaderLen = (buffer[offset + 12] >> 4) * 4;
+            const size_t tcpHeaderLen = static_cast<size_t>(buffer[offset + 12] >> 4) * 4;
             if (tcpHeaderLen < sizeof(TCPHeader) || end < offset + tcpHeaderLen) return;
 
             // Application-layer DPI happens in parse(), once, on the innermost
@@ -504,7 +504,7 @@ namespace core {
             if (etherType == kEthIPv4) {
                 if (end < offset + sizeof(IPv4Header)) return;
                 const uint8_t versionHlen = buffer[offset];
-                const size_t ihl = (versionHlen & 0x0F) * 4;
+                const size_t ihl = static_cast<size_t>(versionHlen & 0x0F) * 4;
                 if ((versionHlen >> 4) != 4 || ihl < sizeof(IPv4Header) || end < offset + ihl) return;
 
                 const uint16_t totalLength = readU16(buffer + offset + 2);
@@ -556,9 +556,10 @@ namespace core {
                 const uint8_t plen = buffer[offset + 5];
                 const uint16_t oper = readU16(buffer + offset + 6);
                 const size_t arpBody = offset + 8;
-                if (ptype == kEthIPv4 && plen == 4 && end >= arpBody + 2u * (hlen + plen)) {
+                if (ptype == kEthIPv4 && plen == 4
+                    && end >= arpBody + 2 * (static_cast<size_t>(hlen) + plen)) {
                     p.srcIP = ipv4ToString(buffer + arpBody + hlen);
-                    p.dstIP = ipv4ToString(buffer + arpBody + 2u * hlen + plen);
+                    p.dstIP = ipv4ToString(buffer + arpBody + 2 * static_cast<size_t>(hlen) + plen);
                 }
                 p.service = (oper == 1) ? "ARP request" : (oper == 2) ? "ARP reply" : "";
                 return;
