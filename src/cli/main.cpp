@@ -272,7 +272,8 @@ namespace {
             [&](const core::PacketData& packet) {
                 session.feed(packet);
                 ++packetsAnalyzed;
-            }, error);
+            }, error,
+            [] { return g_stopRequested.load(std::memory_order_acquire); });
 
         if (!ok) {
             std::cerr << "netprobe-cli: unable to read '" << options.readPath << "': "
@@ -399,6 +400,11 @@ static int run(int argc, char** argv) {
     std::signal(SIGINT, handleInterrupt);
 #ifdef SIGTERM
     std::signal(SIGTERM, handleInterrupt);
+#endif
+#ifdef SIGBREAK
+    // Windows delivers Ctrl+Break as SIGBREAK; it should stop as cleanly as
+    // Ctrl+C rather than killing the process before the output is written.
+    std::signal(SIGBREAK, handleInterrupt);
 #endif
 
     // Replaying a file means the sockets that owned those packets are long

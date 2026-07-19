@@ -92,7 +92,7 @@ TEST(FlowExporterTest, JsonContainsExpectedFieldsAndValues) {
     EXPECT_NE(document.find("\"hostname\": \"example.com\""), std::string::npos);
     EXPECT_NE(document.find("\"bytes_down\": 8192"), std::string::npos);
     EXPECT_NE(document.find("\"packets\": 12"), std::string::npos);
-    EXPECT_NE(document.find("\"initial_rtt_ms\": 24.50"), std::string::npos);
+    EXPECT_NE(document.find("\"initial_rtt_us\": 24500"), std::string::npos);
     EXPECT_NE(document.find("\"duration_sec\": 5"), std::string::npos);
     EXPECT_NE(document.find("\"encrypted_tunnel\": false"), std::string::npos);
     EXPECT_NE(document.find("\"retransmissions_up\": 3"), std::string::npos);

@@ -143,6 +143,23 @@ namespace test {
         struct Case {
             std::string name;
             std::vector<uint8_t> bytes;
+
+            // The degraded outcome this input must produce. Pinning it is the
+            // point: a parser that walks off the end of a packet and returns a
+            // plausible-looking result is worse than one that gives up, and
+            // only an expected value catches the difference.
+            //
+            // Empty expectedProtocol means "unconstrained" — used where more
+            // than one answer is defensible.
+            std::string expectedProtocol;
+            // True when the transport payload cannot be located, so the
+            // payload window must stay empty.
+            bool expectNoPayload = false;
+            // Most fixtures destroy the framing badly enough that no server
+            // name can survive. A few corrupt exactly one length field while
+            // leaving a well-formed ClientHello intact and reachable — there,
+            // recovering the SNI is correct behaviour, not invention.
+            bool expectNoSni = true;
         };
 
         // Offsets into an Ethernet + IPv4 frame.
@@ -191,19 +208,56 @@ namespace test {
             return packet;
         }
 
+        // A TCP frame whose header claims `dataOffsetWords` 32-bit words and
+        // carries `options` between the fixed header and the payload.
+        inline std::vector<uint8_t> tcpFrameWithOptions(uint8_t dataOffsetWords,
+            const std::vector<uint8_t>& options, const std::vector<uint8_t>& payload) {
+            std::vector<uint8_t> packet;
+            appendEthernetHeader(packet, 0x0800);
+            appendIPv4Header(packet,
+                static_cast<uint16_t>(20 + 20 + options.size() + payload.size()), 6,
+                {192, 168, 1, 10}, {93, 184, 216, 34});
+            appendTcpHeader(packet, 50000, 443, 1000, 0x18);
+            // appendTcpHeader writes a fixed data offset of 5 words; override
+            // it so the header can claim the option bytes that follow.
+            packet[kTcpDataOffset] = static_cast<uint8_t>(dataOffsetWords << 4);
+            packet.insert(packet.end(), options.begin(), options.end());
+            packet.insert(packet.end(), payload.begin(), payload.end());
+            return packet;
+        }
+
         inline std::vector<Case> allCases() {
             std::vector<Case> cases;
-            const auto add = [&cases](std::string name, std::vector<uint8_t> bytes) {
-                cases.push_back({std::move(name), std::move(bytes)});
+            const auto add = [&cases](std::string name, std::vector<uint8_t> bytes,
+                std::string expectedProtocol = {}, bool expectNoPayload = false,
+                bool expectNoSni = true) {
+                cases.push_back({std::move(name), std::move(bytes),
+                    std::move(expectedProtocol), expectNoPayload, expectNoSni});
             };
 
             const auto tlsFrame = validTcpFrame(makeTlsClientHello("truncated.example.com"));
             const auto httpFrame = validTcpFrame(makeHttpRequest("truncated.example.com"));
 
             // --- Truncation at every layer boundary --------------------------
-            add("empty", {});
-            add("one-byte", {0x00});
-            for (const size_t size : {6u, 13u, 14u, 15u, 20u, 33u, 34u, 40u, 45u, 53u}) {
+            // A zero-length capture is distinguishable from a truncated one:
+            // there are no bytes to have been cut short.
+            add("empty", {}, "Unknown", /*expectNoPayload=*/true);
+            add("one-byte", {0x00}, "Truncated", /*expectNoPayload=*/true);
+            // Below 34 bytes there is not a complete Ethernet + IPv4 header,
+            // so no transport can be named and no payload located.
+            for (const size_t size : {6u, 13u}) {
+                add("tls-frame-truncated-to-" + std::to_string(size),
+                    truncatedTo(tlsFrame, size), "Truncated", /*expectNoPayload=*/true);
+            }
+            // A complete Ethernet header but an incomplete IPv4 one: no
+            // transport is nameable and no payload can be located.
+            for (const size_t size : {14u, 15u, 20u, 33u}) {
+                add("tls-frame-truncated-to-" + std::to_string(size),
+                    truncatedTo(tlsFrame, size), {}, /*expectNoPayload=*/true);
+            }
+            // From here the headers are present but the payload is cut short;
+            // more than one answer is defensible, so only sanity is asserted.
+            for (const size_t size : {34u, 40u, 45u, 53u}) {
                 add("tls-frame-truncated-to-" + std::to_string(size),
                     truncatedTo(tlsFrame, size));
             }
@@ -213,12 +267,12 @@ namespace test {
             {
                 auto packet = tlsFrame;
                 packet[kIPv4VersionIhl] = 0x40; // IHL = 0, below the 20-byte minimum
-                add("ipv4-ihl-zero", packet);
+                add("ipv4-ihl-zero", packet, "Unknown", /*expectNoPayload=*/true);
             }
             {
                 auto packet = tlsFrame;
                 packet[kIPv4VersionIhl] = 0x44; // IHL = 4 words = 16 bytes
-                add("ipv4-ihl-below-minimum", packet);
+                add("ipv4-ihl-below-minimum", packet, "Unknown", /*expectNoPayload=*/true);
             }
             {
                 auto packet = tlsFrame;
@@ -229,30 +283,63 @@ namespace test {
                 auto packet = tlsFrame;
                 packet[kIPv4TotalLength] = 0xFF; // total length far beyond the buffer
                 packet[kIPv4TotalLength + 1] = 0xFF;
-                add("ipv4-total-length-exceeds-buffer", packet);
+                add("ipv4-total-length-exceeds-buffer", packet, "TCP", /*expectNoPayload=*/false,
+                    /*expectNoSni=*/false);
             }
             {
                 auto packet = tlsFrame;
                 packet[kIPv4TotalLength] = 0x00; // total length below the header size
                 packet[kIPv4TotalLength + 1] = 0x08;
-                add("ipv4-total-length-below-header", packet);
+                add("ipv4-total-length-below-header", packet, "Unknown", /*expectNoPayload=*/true);
             }
             {
                 auto packet = tlsFrame;
                 packet[kIPv4VersionIhl] = 0x65; // version 6 in an IPv4 ethertype frame
-                add("ipv4-version-mismatch", packet);
+                add("ipv4-version-mismatch", packet, "Unknown", /*expectNoPayload=*/true);
             }
 
             // --- TCP headers that lie ---------------------------------------
             {
                 auto packet = tlsFrame;
                 packet[kTcpDataOffset] = 0xF0; // data offset = 15 words = 60 bytes
-                add("tcp-data-offset-past-payload", packet);
+                add("tcp-data-offset-past-payload", packet, "TCP");
             }
             {
                 auto packet = tlsFrame;
                 packet[kTcpDataOffset] = 0x00; // data offset = 0, below the 20-byte minimum
-                add("tcp-data-offset-zero", packet);
+                add("tcp-data-offset-zero", packet, "TCP", /*expectNoPayload=*/true);
+            }
+
+            // --- TCP options that lie ---------------------------------------
+            {
+                // Option kind 2 (MSS) declaring length 0. A parser that walks
+                // the option list by adding the declared length never advances
+                // past this one: the classic infinite-loop bait.
+                const std::vector<uint8_t> options = {0x02, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                add("tcp-option-length-zero",
+                    tcpFrameWithOptions(8, options, {0xDE, 0xAD, 0xBE, 0xEF}));
+            }
+            {
+                // Option kind 2 declaring 200 bytes inside a 12-byte option
+                // area, so the option runs past the end of the header.
+                const std::vector<uint8_t> options = {0x02, 0xC8, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                add("tcp-option-length-overruns-header",
+                    tcpFrameWithOptions(8, options, {0xDE, 0xAD, 0xBE, 0xEF}));
+            }
+            {
+                // A well-formed option area, as the control for the two above:
+                // NOP, NOP, then a valid 10-byte timestamp option.
+                std::vector<uint8_t> options = {0x01, 0x01, 0x08, 0x0A};
+                options.resize(12, 0x00);
+                add("tcp-valid-options",
+                    tcpFrameWithOptions(8, options, {0xDE, 0xAD, 0xBE, 0xEF}), "TCP");
+            }
+            {
+                // Data offset claims option bytes the frame does not contain.
+                add("tcp-options-claimed-but-absent",
+                    tcpFrameWithOptions(15, {}, {}), "TCP", /*expectNoPayload=*/true);
             }
 
             // --- UDP headers that lie ---------------------------------------

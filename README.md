@@ -193,13 +193,16 @@ flowchart LR
 - **Protocol stack (`src/core/`)**:
   - `LinkType` maps libpcap `DLT_*` values to supported encapsulations, so cooked, loopback, raw-IP, and Ethernet-family captures are decoded intentionally.
   - `ProtocolParser` is the stateless fast path: link layer -> IPv4/IPv6 -> tunnel descent -> transport -> application hints and service classification.
-  - `TlsReassembler` buffers split TCP ClientHellos with size and expiry caps; it is owned by the UI layer because it is stream state.
+  - `TlsReassembler` buffers split TCP ClientHellos with size and expiry caps.
   - `QuicParser` decrypts QUIC v1/v2 Initial packets with mbedTLS and extracts TLS ClientHello data from CRYPTO frames.
   - `QuicTracker` stitches CRYPTO fragments across multiple Initial packets, keyed by connection id.
   - `DNSParser` extracts DNS/mDNS/LLMNR answers, feeds `HostnameCache`, and flags advertised ECH configs.
   - `FlowAggregator` collapses both directions of a conversation into one canonical key, tracks rates and byte totals, and measures initial TCP RTT from SYN/SYN-ACK timing.
   - `GeoIPResolver` and `ProcessResolver` add country/ASN and process ownership where platform data is available.
-- **GUI layer (`src/ui/`)**: `GuiLayer` owns the Dear ImGui dockspace, capture controls, settings, queue drain, stateful reassemblers, DNS name cache, flow aggregator, and bounded packet history. `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView` render those derived models.
+  - `AnalysisSession` drives the whole per-packet pipeline — decode, cross-packet SNI recovery, DNS harvesting, hostname attribution, process lookup, flow aggregation — and owns the stateful reassemblers, the name cache, and the flow table. The GUI and the headless CLI both run this same object, which is what keeps them from drifting apart.
+  - `FlowExporter` serializes a flow snapshot to CSV or JSON.
+- **GUI layer (`src/ui/`)**: `GuiLayer` owns the Dear ImGui dockspace, capture controls, settings, queue drain, and bounded packet history, layered over an `AnalysisSession`. `Dashboard`, `FlowsView`, `PacketView`, `PacketDetail`, and `StatsView` render those derived models.
+- **Headless CLI (`src/cli/`)**: the same `CaptureEngine` and `AnalysisSession` with no window, exporting flows for scripts and pipelines.
 
 ## Quality
 

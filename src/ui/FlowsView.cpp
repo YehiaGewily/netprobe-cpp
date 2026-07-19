@@ -21,17 +21,25 @@ namespace ui {
 
         using core::organizationLabel;
 
-        uint64_t deliveryProblemsOf(const core::Flow& flow) {
-            return flow.retransmissionsUp + flow.retransmissionsDown
-                + flow.outOfOrderUp + flow.outOfOrderDown;
+        uint64_t retransmissionsOf(const core::Flow& flow) {
+            return flow.retransmissionsUp + flow.retransmissionsDown;
         }
 
-        // Retransmits and reorderings as a share of the flow's packets. A rate
-        // reads better than a raw count here: 20 retransmits out of 50 packets
-        // is a broken connection, out of 500,000 it is noise.
-        double deliveryProblemRateOf(const core::Flow& flow) {
+        uint64_t outOfOrderOf(const core::Flow& flow) {
+            return flow.outOfOrderUp + flow.outOfOrderDown;
+        }
+
+        // Retransmissions as a share of the flow's packets. A rate reads
+        // better than a raw count: 20 retransmits out of 50 packets is a
+        // broken connection, out of 500,000 it is noise.
+        //
+        // Reordering is deliberately kept out of this number. The two have
+        // different causes — loss versus multipath or queueing — and merging
+        // them produces a figure that cannot be acted on. Out-of-order counts
+        // live in the tooltip and the detail pane.
+        double retransmissionRateOf(const core::Flow& flow) {
             if (flow.packets == 0) return 0.0;
-            return 100.0 * static_cast<double>(deliveryProblemsOf(flow))
+            return 100.0 * static_cast<double>(retransmissionsOf(flow))
                 / static_cast<double>(flow.packets);
         }
 
@@ -122,9 +130,9 @@ namespace ui {
                 break;
             }
             case 9: {
-                const double leftLoss = deliveryProblemRateOf(left);
-                const double rightLoss = deliveryProblemRateOf(right);
-                comparison = leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : 0;
+                const double leftRate = retransmissionRateOf(left);
+                const double rightRate = retransmissionRateOf(right);
+                comparison = leftRate < rightRate ? -1 : leftRate > rightRate ? 1 : 0;
                 break;
             }
             case 10: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
@@ -297,7 +305,7 @@ namespace ui {
             ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, scaled(90.0f));
             ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, scaled(90.0f));
             ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, scaled(85.0f));
-            ImGui::TableSetupColumn("Loss", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, scaled(70.0f));
+            ImGui::TableSetupColumn("Retrans", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, scaled(78.0f));
             ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, scaled(70.0f));
             ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, scaled(130.0f));
             ImGui::TableHeadersRow();
@@ -400,18 +408,19 @@ namespace ui {
                         // Only TCP carries the sequence numbers this is derived from.
                         ImGui::TextDisabled("--");
                     } else {
-                        const uint64_t problems = deliveryProblemsOf(flow);
-                        const double lossRate = deliveryProblemRateOf(flow);
-                        const ImVec4& lossColor = lossRate < 1.0 ? kSuccess
-                                                : lossRate < 3.0 ? kWarning : kDanger;
-                        ImGui::TextColored(lossColor, "%.1f%%", lossRate);
-                        if (problems > 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        const uint64_t retransmissions = retransmissionsOf(flow);
+                        const double rate = retransmissionRateOf(flow);
+                        // A couple of percent is where a connection stops
+                        // feeling fast, so that is where the colour turns.
+                        const ImVec4& rateColor = rate < 2.0 ? kSuccess
+                                                : rate < 5.0 ? kWarning : kDanger;
+                        ImGui::TextColored(rateColor, "%.1f%%", rate);
+                        if ((retransmissions > 0 || outOfOrderOf(flow) > 0)
+                            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
                             ImGui::SetTooltip(
                                 "%llu retransmitted, %llu out of order, of %llu packets",
-                                static_cast<unsigned long long>(
-                                    flow.retransmissionsUp + flow.retransmissionsDown),
-                                static_cast<unsigned long long>(
-                                    flow.outOfOrderUp + flow.outOfOrderDown),
+                                static_cast<unsigned long long>(retransmissions),
+                                static_cast<unsigned long long>(outOfOrderOf(flow)),
                                 static_cast<unsigned long long>(flow.packets));
                         }
                     }

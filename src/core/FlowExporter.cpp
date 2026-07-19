@@ -208,8 +208,11 @@ namespace core {
             document += std::format("{}", durationSecondsOf(flow));
             document += ",\n      \"rate_bytes_per_sec\": ";
             document += std::format("{:.1f}", flow.rateBytesPerSecond);
-            document += ",\n      \"initial_rtt_ms\": ";
-            document += std::format("{:.2f}", rttMillisecondsOf(flow));
+            // Microseconds, as an integer: the JSON is for machines, and the
+            // raw measurement avoids handing consumers a rounded float to
+            // convert back. The CSV keeps milliseconds for spreadsheets.
+            document += ",\n      \"initial_rtt_us\": ";
+            document += std::format("{}", flow.initialRttMicroseconds);
             document += ",\n      \"retransmissions_up\": ";
             document += std::format("{}", flow.retransmissionsUp);
             document += ",\n      \"retransmissions_down\": ";

@@ -42,6 +42,27 @@ namespace {
     // Everything a malformed packet is allowed to produce. The point is not
     // that parsing succeeds, but that failure is expressed as absent or
     // clearly-marked fields rather than as garbage that reads as real.
+    // Asserts the specific degraded result a fixture declares. This is the
+    // half that catches a parser quietly starting to invent answers; the
+    // generic sanity checks below only catch it going off the rails.
+    void expectPinnedOutcome(const core::ParsedPacket& parsed,
+        const malformed::Case& testCase) {
+        if (!testCase.expectedProtocol.empty()) {
+            EXPECT_EQ(parsed.protocol, testCase.expectedProtocol)
+                << testCase.name << ": parsed as a different transport than expected";
+        }
+        if (testCase.expectNoPayload) {
+            EXPECT_EQ(parsed.payloadLength, 0u)
+                << testCase.name << ": located a payload that is not there";
+        }
+        if (testCase.expectNoSni) {
+            // An SNI here would be fabricated from bytes that do not encode
+            // one — and it would be shown to the user as fact.
+            EXPECT_TRUE(parsed.sni.empty())
+                << testCase.name << ": invented an SNI (" << parsed.sni << ")";
+        }
+    }
+
     void expectDegradedButSane(const core::ParsedPacket& parsed,
         const std::vector<uint8_t>& bytes, const std::string& name) {
         // A payload window must never point outside the captured bytes.
@@ -72,6 +93,7 @@ TEST(MalformedPacketTest, ProtocolParserSurvivesEveryAdversarialCase) {
         const auto raw = toPacketData(testCase.bytes);
         const auto parsed = core::ProtocolParser::parse(raw);
         expectDegradedButSane(parsed, testCase.bytes, testCase.name);
+        expectPinnedOutcome(parsed, testCase);
     }
 }
 

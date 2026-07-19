@@ -42,9 +42,14 @@ namespace capture {
         // beginning of the file before anything could consume it — silently
         // wrong totals, which is unacceptable when the output is an exported
         // flow table.
+        // `shouldStop`, when supplied, is polled between packets so a long
+        // replay can be interrupted. Stopping early still reports success:
+        // the caller knows how many packets it consumed, and a partial
+        // analysis of a huge capture is a legitimate thing to ask for.
         bool replayFile(const std::string& path,
             const std::function<void(const core::PacketData&)>& onPacket,
-            std::string& error);
+            std::string& error,
+            const std::function<bool()>& shouldStop = {});
         bool setFilter(const std::string& filter, std::string& error);
         bool exportSession(const std::string& path, std::string& error) const;
         void stopCapture();

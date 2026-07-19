@@ -84,7 +84,8 @@ namespace capture {
     }
 
     bool CaptureEngine::replayFile(const std::string& path,
-        const std::function<void(const core::PacketData&)>& onPacket, std::string& error) {
+        const std::function<void(const core::PacketData&)>& onPacket, std::string& error,
+        const std::function<bool()>& shouldStop) {
         stopCapture();
         m_queue.clear();
         clearSession();
@@ -100,6 +101,11 @@ namespace capture {
         }
 
         while (true) {
+            if (shouldStop && shouldStop()) {
+                m_backend->close();
+                return true;
+            }
+
             core::PacketData packet;
             std::string readError;
             switch (m_backend->nextPacket(packet, readError)) {
