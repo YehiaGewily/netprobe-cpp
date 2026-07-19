@@ -106,6 +106,37 @@ cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
 
 For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in `data/`. See [data/README.md](data/README.md).
 
+## Headless CLI
+
+`netprobe-cli` runs the same capture and analysis pipeline with no window, for servers, CI, and SSH sessions. It ships alongside the GUI in every release ZIP.
+
+```bash
+# List the adapters available for live capture
+netprobe-cli --list-devices
+
+# Replay a capture file and export its flows as JSON
+netprobe-cli -r capture.pcap -o flows.json
+
+# Capture live for 60 seconds, filtered, exporting CSV
+netprobe-cli -i eth0 -f "tcp port 443" --duration 60 -o flows.csv
+
+# Pipe JSON straight into jq
+netprobe-cli -r capture.pcap -o - | jq '.flows[] | select(.bytes_down > 100000)'
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `-r, --read <file>` | Replay an offline capture |
+| `-i, --device <name>` | Capture live from an adapter (needs privileges) |
+| `-f, --filter <bpf>` | BPF capture filter, live capture only |
+| `-o, --output <path>` | Destination file, or `-` for stdout |
+| `--format <json\|csv>` | Override the format inferred from the extension |
+| `--duration <sec>` | Stop after this many seconds |
+| `--packet-count <n>` | Stop after this many packets |
+| `--no-process` | Skip the owning-process lookup |
+
+Ctrl+C stops a live capture and still writes the output. Exit codes are `0` success, `1` usage error, `2` runtime failure, so scripts can tell a bad invocation from a failed capture. Diagnostics go to stderr, which keeps `-o -` output clean for piping.
+
 ## Architecture
 
 NetProbe is built around a bounded **producer-consumer** pipeline. Capture runs on a backend-owned path, while the Dear ImGui frame loop drains packets, enriches them, and updates view models without blocking the capture thread.

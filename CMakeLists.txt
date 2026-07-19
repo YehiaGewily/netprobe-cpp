@@ -264,7 +264,17 @@ target_compile_definitions(NetProbe PRIVATE
     NETPROBE_VERSION="${PROJECT_VERSION}"
 )
 
-install(TARGETS NetProbe
+# --- 6b. Headless CLI ---
+# Links NetProbeCore only: no ImGui, GLFW, or OpenGL, so it builds and runs on
+# a machine with no display.
+add_executable(NetProbeCli src/cli/main.cpp)
+target_link_libraries(NetProbeCli PRIVATE NetProbeCore)
+target_compile_definitions(NetProbeCli PRIVATE
+    NETPROBE_VERSION="${PROJECT_VERSION}"
+)
+set_target_properties(NetProbeCli PROPERTIES OUTPUT_NAME "netprobe-cli")
+
+install(TARGETS NetProbe NetProbeCli
     RUNTIME DESTINATION .
     BUNDLE DESTINATION .
 )
@@ -312,6 +322,28 @@ if(BUILD_TESTING)
     target_compile_definitions(NetProbeTests PRIVATE
         LIBMAXMINDDB_TEST_DATA_DIR="${libmaxminddb_SOURCE_DIR}/t/maxmind-db/test-data"
     )
+    # End-to-end CLI checks. These drive the real binary over the generated
+    # sample capture, which is the only coverage of the complete chain from
+    # pcap file through to an exported file.
+    foreach(_netprobe_cli_format json csv)
+        add_test(NAME CliExportsSampleFlowsAs${_netprobe_cli_format}
+            COMMAND ${CMAKE_COMMAND}
+                -DCLI=$<TARGET_FILE:NetProbeCli>
+                -DPCAP=${CMAKE_SOURCE_DIR}/data/sample.pcap
+                -DOUT=${CMAKE_CURRENT_BINARY_DIR}/cli-flows.${_netprobe_cli_format}
+                -DFORMAT=${_netprobe_cli_format}
+                -P ${CMAKE_SOURCE_DIR}/tests/check_cli_export.cmake)
+    endforeach()
+
+    # Usage errors must be distinguishable from runtime failures by exit code,
+    # since that is what a calling script branches on.
+    add_test(NAME CliRejectsMissingSource COMMAND NetProbeCli --output flows.json)
+    set_tests_properties(CliRejectsMissingSource PROPERTIES WILL_FAIL TRUE)
+
+    add_test(NAME CliShowsHelp COMMAND NetProbeCli --help)
+    set_tests_properties(CliShowsHelp PROPERTIES
+        PASS_REGULAR_EXPRESSION "Usage:")
+
     include(GoogleTest)
     # PRE_TEST defers the exe enumeration from build-time to ctest-time. On
     # Windows this matters because the test executable links wpcap.dll

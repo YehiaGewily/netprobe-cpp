@@ -83,6 +83,42 @@ namespace capture {
         }
     }
 
+    bool CaptureEngine::replayFile(const std::string& path,
+        const std::function<void(const core::PacketData&)>& onPacket, std::string& error) {
+        stopCapture();
+        m_queue.clear();
+        clearSession();
+        m_currentDevice.clear();
+
+        if (!m_backend->openFile(path, error)) return false;
+
+        m_sessionLinkType.store(m_backend->linkType(), std::memory_order_release);
+        if (m_backend->linkType() == core::LinkType::Unsupported) {
+            error = "the capture uses an unsupported link-layer type; packets cannot be decoded";
+            m_backend->close();
+            return false;
+        }
+
+        while (true) {
+            core::PacketData packet;
+            std::string readError;
+            switch (m_backend->nextPacket(packet, readError)) {
+            case PacketReadStatus::Packet:
+                onPacket(packet);
+                break;
+            case PacketReadStatus::Timeout:
+                break;
+            case PacketReadStatus::EndOfFile:
+                m_backend->close();
+                return true;
+            case PacketReadStatus::Error:
+                error = readError;
+                m_backend->close();
+                return false;
+            }
+        }
+    }
+
     bool CaptureEngine::setFilter(const std::string& filter, std::string& error) {
         if (!m_captureThread.joinable() || !m_backend->isOpen()) {
             error = "A live capture must be running before a BPF filter can be applied.";
