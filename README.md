@@ -21,10 +21,10 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
   - **DNS/mDNS**: A/AAAA/CNAME, plus **PTR** (names LAN devices that never appear in a forward lookup), SRV, TXT, and **HTTPS/SVCB** records.
 - **Encrypted-DNS visibility**: detects DoH/DoT/DoQ and **Encrypted Client Hello**, and tells you when name resolution has moved off the wire rather than silently showing bare IPs.
 - **Packet detail pane**: click any packet to see a structured Frame → Tunnel → Network → Transport → Application decode plus an `xxd`-style hex dump of the raw bytes.
-- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, service, hostname, owning process, Country, and ASN/organization, with a detail pane and live rate sparkline. Flow keys are canonical, so both directions of a peer-to-peer conversation collapse into a single row.
+- **Flows view**: sortable per-connection byte totals, one-second rate, **initial TCP RTT** (from the SYN / SYN-ACK delta, color-coded by latency), duration, **per-flow retransmission and out-of-order rates**, service, hostname, owning process, Country, and ASN/organization, with a detail pane and live rate sparkline. Flow keys are canonical, so both directions of a peer-to-peer conversation collapse into a single row.
 - **Statistics view**: protocol hierarchy, top talkers by bytes, and name-resolution health.
 - **Process resolution**: the *App* column in both the packet list and the flows table shows the owning process on Windows (iphlpapi), Linux (`/proc/net/*` + `/proc/<pid>/fd/`), and macOS (`proc_pidfdinfo`). Flows capture the process while the socket is live, so the name persists after a short-lived connection closes. Running elevated widens coverage to other users' processes.
-- **Filtering and export**: live BPF capture filters such as `tcp port 443`, a separate display filter over captured packets, PCAP export, and flow export to CSV.
+- **Filtering and export**: live BPF capture filters such as `tcp port 443`, a separate display filter over captured packets, PCAP export, and flow export to CSV or JSON.
 - **Light and dark themes**, adjustable UI scale, and keyboard shortcuts — all persisted between runs.
 - **Cross-platform backends**: Npcap on Windows and libpcap on Linux/macOS.
 
@@ -93,7 +93,7 @@ cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
 ## Usage
 
 1. Run the executable from the extracted release ZIP or build output directory.
-2. **No admin? Try the sample first.** The build emits `data/sample.pcap` (mixed ARP / DNS / TLS-SNI traffic with three resolvable hostnames). Open it via **File → Open PCAP…** to exercise the full UI without elevation.
+2. **No admin? Try the sample first.** The build emits `data/sample.pcap` (mixed ARP / DNS / TCP traffic: three resolvable hostnames, each with a full TLS handshake and a measurable RTT). Open it via **File → Open PCAP…** to exercise the full UI without elevation.
 3. **Live capture** usually requires elevated privileges. On Windows:
 
     ```powershell

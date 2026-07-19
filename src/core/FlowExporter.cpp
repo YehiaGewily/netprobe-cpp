@@ -122,8 +122,11 @@ namespace core {
 
     void FlowExporter::writeCsv(const std::vector<Flow>& flows, std::ostream& out,
         GeoIPResolver* geo) {
+        // New columns are appended rather than inserted so existing consumers
+        // that index by position keep working.
         out << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,process,country,organization,"
-               "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec\n";
+               "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec,"
+               "retransmissions_up,retransmissions_down,out_of_order_up,out_of_order_down\n";
         for (const auto& flow : flows) {
             const auto info = lookupGeo(geo, flow.key.dstIP);
             const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
@@ -142,7 +145,11 @@ namespace core {
                 << flow.bytesDown << ','
                 << std::format("{:.1f}", flow.rateBytesPerSecond) << ','
                 << std::format("{:.2f}", rttMillisecondsOf(flow)) << ','
-                << durationSecondsOf(flow) << '\n';
+                << durationSecondsOf(flow) << ','
+                << flow.retransmissionsUp << ','
+                << flow.retransmissionsDown << ','
+                << flow.outOfOrderUp << ','
+                << flow.outOfOrderDown << '\n';
         }
     }
 
@@ -203,6 +210,14 @@ namespace core {
             document += std::format("{:.1f}", flow.rateBytesPerSecond);
             document += ",\n      \"initial_rtt_ms\": ";
             document += std::format("{:.2f}", rttMillisecondsOf(flow));
+            document += ",\n      \"retransmissions_up\": ";
+            document += std::format("{}", flow.retransmissionsUp);
+            document += ",\n      \"retransmissions_down\": ";
+            document += std::format("{}", flow.retransmissionsDown);
+            document += ",\n      \"out_of_order_up\": ";
+            document += std::format("{}", flow.outOfOrderUp);
+            document += ",\n      \"out_of_order_down\": ";
+            document += std::format("{}", flow.outOfOrderDown);
             document += ",\n      \"encrypted_tunnel\": ";
             document += flow.encryptedTunnel ? "true" : "false";
             document += "\n    }";

@@ -115,6 +115,62 @@ namespace core {
             }
         }
 
+        // Delivery problems, judged per direction against the highest sequence
+        // number seen so far. Only data-bearing segments participate: a bare
+        // ACK carries no bytes and repeats the sequence number of the next
+        // byte it expects, so counting them would report constant duplicates.
+        //
+        // All comparisons go through a signed 32-bit difference, which is
+        // RFC 1982 serial arithmetic — the only way these stay correct when a
+        // long-lived stream wraps past 2^32.
+        if (packet.protocol == "TCP" && packet.payloadLength > 0) {
+            DirectionSequence& sequence =
+                downstream ? state.downSequence : state.upSequence;
+            uint64_t& retransmissions =
+                downstream ? state.flow.retransmissionsDown : state.flow.retransmissionsUp;
+            uint64_t& outOfOrder =
+                downstream ? state.flow.outOfOrderDown : state.flow.outOfOrderUp;
+
+            const uint32_t segmentEnd =
+                packet.tcpSeq + static_cast<uint32_t>(packet.payloadLength);
+
+            if (!sequence.valid) {
+                // First data we have seen in this direction establishes the
+                // baseline; a flow that began before the capture started must
+                // not be reported as one giant reordering.
+                sequence.nextExpected = segmentEnd;
+                sequence.valid = true;
+            } else {
+                const int32_t offsetFromExpected =
+                    static_cast<int32_t>(packet.tcpSeq - sequence.nextExpected);
+
+                if (offsetFromExpected == 0) {
+                    sequence.nextExpected = segmentEnd;
+                } else if (offsetFromExpected < 0) {
+                    // Starts in territory already covered: a retransmission,
+                    // whole or partial.
+                    ++retransmissions;
+                    if (static_cast<int32_t>(segmentEnd - sequence.nextExpected) > 0) {
+                        sequence.nextExpected = segmentEnd; // partial overlap carried new bytes
+                    }
+                } else {
+                    // Skips ahead of what we expected, so something earlier is
+                    // missing or reordered. When the gap is filled later that
+                    // segment lands in the branch above, which is why a single
+                    // reordering shows as one of each.
+                    ++outOfOrder;
+                    sequence.nextExpected = segmentEnd;
+                }
+            }
+        }
+
+        // A reset ends the byte stream; sequence numbers after it belong to a
+        // new connection that may reuse this address/port pair.
+        if (packet.tcpRst) {
+            state.upSequence = {};
+            state.downSequence = {};
+        }
+
         if (!hostname.empty()) state.flow.hostname = hostname;
         if (!packet.sni.empty()) state.flow.hostname = packet.sni;
         else if (!packet.hostname.empty()) state.flow.hostname = packet.hostname;

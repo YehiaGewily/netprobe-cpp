@@ -31,6 +31,8 @@ namespace {
         flow.lastSeen = 1'700'000'005'000'000;
         flow.rateBytesPerSecond = 1536.0;
         flow.initialRttMicroseconds = 24'500;
+        flow.retransmissionsUp = 3;
+        flow.outOfOrderDown = 2;
         return flow;
     }
 
@@ -93,6 +95,9 @@ TEST(FlowExporterTest, JsonContainsExpectedFieldsAndValues) {
     EXPECT_NE(document.find("\"initial_rtt_ms\": 24.50"), std::string::npos);
     EXPECT_NE(document.find("\"duration_sec\": 5"), std::string::npos);
     EXPECT_NE(document.find("\"encrypted_tunnel\": false"), std::string::npos);
+    EXPECT_NE(document.find("\"retransmissions_up\": 3"), std::string::npos);
+    EXPECT_NE(document.find("\"retransmissions_down\": 0"), std::string::npos);
+    EXPECT_NE(document.find("\"out_of_order_down\": 2"), std::string::npos);
 }
 
 TEST(FlowExporterTest, JsonWithNoFlowsIsStillValid) {
@@ -152,7 +157,8 @@ TEST(FlowExporterTest, CsvKeepsItsHeaderAndQuotesEmbeddedCommas) {
     ASSERT_NE(headerEnd, std::string::npos);
     EXPECT_EQ(csv.substr(0, headerEnd),
         "host,src_ip,src_port,dst_ip,dst_port,protocol,service,process,country,organization,"
-        "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec");
+        "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec,"
+        "retransmissions_up,retransmissions_down,out_of_order_up,out_of_order_down");
     // The comma and quote must be escaped, not passed through raw.
     EXPECT_NE(csv.find("\"a,b\"\"c\""), std::string::npos) << csv;
 }

@@ -47,17 +47,37 @@ namespace {
         f.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
     }
 
-    std::vector<uint8_t> tlsClientHelloPacket(const std::string& sni) {
-        const auto tls = test::makeTlsClientHello(sni);
+    const std::vector<uint8_t> kClientAddress = {192, 168, 1, 42};
+
+    // 20-byte TCP header. test::appendTcpHeader hardcodes a zero
+    // acknowledgement number, which would make the SYN-ACKs below wrong if
+    // anyone opened this capture in Wireshark.
+    void appendTcpHeader(std::vector<uint8_t>& packet, uint16_t sourcePort,
+        uint16_t destinationPort, uint32_t sequence, uint32_t acknowledgement, uint8_t flags) {
+        test::appendU16(packet, sourcePort);
+        test::appendU16(packet, destinationPort);
+        test::appendU32BE(packet, sequence);
+        test::appendU32BE(packet, acknowledgement);
+        packet.push_back(0x50);          // data offset = 5 words, no options
+        packet.push_back(flags);
+        test::appendU16(packet, 0xFFFF); // window
+        test::appendU16(packet, 0x0000); // checksum
+        test::appendU16(packet, 0x0000); // urgent pointer
+    }
+
+    std::vector<uint8_t> tcpSegment(const std::vector<uint8_t>& serverAddress,
+        uint16_t clientPort, uint32_t sequence, uint32_t acknowledgement, uint8_t flags,
+        bool fromServer, const std::vector<uint8_t>& payload = {}) {
         std::vector<uint8_t> packet;
         test::appendEthernetHeader(packet, 0x0800);
-        test::appendIPv4Header(packet, static_cast<uint16_t>(20 + 20 + tls.size()), 6,
-            {192, 168, 1, 42}, {93, 184, 216, 34});
-        test::appendU16(packet, 50123);
-        test::appendU16(packet, 443);
-        packet.insert(packet.end(), {0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-            0x50, 0x18, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00});
-        packet.insert(packet.end(), tls.begin(), tls.end());
+        test::appendIPv4Header(packet, static_cast<uint16_t>(20 + 20 + payload.size()), 6,
+            fromServer ? serverAddress : kClientAddress,
+            fromServer ? kClientAddress : serverAddress);
+        appendTcpHeader(packet,
+            fromServer ? uint16_t{443} : clientPort,
+            fromServer ? clientPort : uint16_t{443},
+            sequence, acknowledgement, flags);
+        packet.insert(packet.end(), payload.begin(), payload.end());
         return packet;
     }
 
@@ -129,18 +149,6 @@ namespace {
         return packet;
     }
 
-    std::vector<uint8_t> tcpSynPacket() {
-        std::vector<uint8_t> packet;
-        test::appendEthernetHeader(packet, 0x0800);
-        test::appendIPv4Header(packet, static_cast<uint16_t>(20 + 20), 6,
-            {192, 168, 1, 42}, {93, 184, 216, 34});
-        test::appendU16(packet, 50123);
-        test::appendU16(packet, 443);
-        packet.insert(packet.end(), {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x50, 0x02, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00});
-        return packet;
-    }
-
 }
 
 int main(int argc, char** argv) {
@@ -151,19 +159,49 @@ int main(int argc, char** argv) {
     const std::filesystem::path output = argv[1];
     std::filesystem::create_directories(output.parent_path());
 
+    // One resolvable site per connection. Each gets its own address and client
+    // port so the capture yields three distinct flows, each matching the DNS
+    // answer that precedes it — previously every ClientHello was addressed to
+    // the same server regardless of the name it advertised, which collapsed
+    // them into a single flow whose repeated sequence numbers read as
+    // retransmissions.
+    struct Site {
+        std::string hostname;
+        std::vector<uint8_t> address;
+        uint16_t clientPort;
+        uint32_t roundTripMicroseconds; // gap between SYN and SYN-ACK
+    };
+    const std::vector<Site> sites = {
+        {"www.example.com",   {93, 184, 216, 34}, 50123, 12'000},
+        {"api.github.com",    {140, 82, 121, 6},  50124, 38'000},
+        {"cdn.netprobe.test", {52, 84, 100, 5},   50125,  6'500},
+    };
+
+    constexpr uint8_t kSyn = 0x02;
+    constexpr uint8_t kSynAck = 0x12;
+    constexpr uint8_t kPshAck = 0x18;
+
     std::vector<CapturedPacket> packets;
-    uint32_t t = 1700000000;
-    packets.push_back({t,     0, arpRequestPacket()});
-    packets.push_back({t,  1500, dnsQueryPacket("www.example.com")});
-    packets.push_back({t,  4200, dnsResponsePacket("www.example.com", {93, 184, 216, 34})});
-    packets.push_back({t,  5100, tcpSynPacket()});
-    packets.push_back({t,  6300, tlsClientHelloPacket("www.example.com")});
-    packets.push_back({t,  8700, dnsQueryPacket("api.github.com")});
-    packets.push_back({t, 12100, dnsResponsePacket("api.github.com", {140, 82, 121, 6})});
-    packets.push_back({t, 13400, tlsClientHelloPacket("api.github.com")});
-    packets.push_back({t, 19000, dnsQueryPacket("cdn.netprobe.test")});
-    packets.push_back({t, 21300, dnsResponsePacket("cdn.netprobe.test", {52, 84, 100, 5})});
-    packets.push_back({t, 22700, tlsClientHelloPacket("cdn.netprobe.test")});
+    const uint32_t t = 1700000000;
+    uint32_t at = 0;
+    const auto advance = [&at](uint32_t microseconds) { return at += microseconds; };
+
+    packets.push_back({t, at, arpRequestPacket()});
+
+    for (const auto& site : sites) {
+        packets.push_back({t, advance(1'500), dnsQueryPacket(site.hostname)});
+        packets.push_back({t, advance(2'700), dnsResponsePacket(site.hostname, site.address)});
+
+        // A complete three-way handshake, so the flow reports an initial RTT.
+        // The SYN consumes sequence 0, which is why the ClientHello starts at 1.
+        packets.push_back({t, advance(900),
+            tcpSegment(site.address, site.clientPort, 0, 0, kSyn, /*fromServer=*/false)});
+        packets.push_back({t, advance(site.roundTripMicroseconds),
+            tcpSegment(site.address, site.clientPort, 0, 1, kSynAck, /*fromServer=*/true)});
+        packets.push_back({t, advance(1'200),
+            tcpSegment(site.address, site.clientPort, 1, 1, kPshAck, /*fromServer=*/false,
+                test::makeTlsClientHello(site.hostname))});
+    }
 
     writePcap(output, packets);
     std::cout << "Wrote " << packets.size() << " packets to " << output.string() << "\n";

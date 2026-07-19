@@ -309,6 +309,7 @@ if(BUILD_TESTING)
         tests/parser_test.cpp
         tests/analysis_session_test.cpp
         tests/flow_exporter_test.cpp
+        tests/flow_loss_test.cpp
     )
     # src/, pcap headers, and the crypto/geo libraries all arrive through
     # NetProbeCore's PUBLIC usage requirements.

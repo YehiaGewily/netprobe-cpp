@@ -21,6 +21,20 @@ namespace ui {
 
         using core::organizationLabel;
 
+        uint64_t deliveryProblemsOf(const core::Flow& flow) {
+            return flow.retransmissionsUp + flow.retransmissionsDown
+                + flow.outOfOrderUp + flow.outOfOrderDown;
+        }
+
+        // Retransmits and reorderings as a share of the flow's packets. A rate
+        // reads better than a raw count here: 20 retransmits out of 50 packets
+        // is a broken connection, out of 500,000 it is noise.
+        double deliveryProblemRateOf(const core::Flow& flow) {
+            if (flow.packets == 0) return 0.0;
+            return 100.0 * static_cast<double>(deliveryProblemsOf(flow))
+                / static_cast<double>(flow.packets);
+        }
+
         // Two-column key/value row used by the flow detail pane.
         void detailRow(const char* key, const std::string& value) {
             ImGui::TableNextRow();
@@ -107,9 +121,15 @@ namespace ui {
                 comparison = lr < rr ? -1 : lr > rr ? 1 : 0;
                 break;
             }
-            case 9: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
+            case 9: {
+                const double leftLoss = deliveryProblemRateOf(left);
+                const double rightLoss = deliveryProblemRateOf(right);
+                comparison = leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : 0;
+                break;
+            }
+            case 10: comparison = (left.lastSeen - left.firstSeen) < (right.lastSeen - right.firstSeen) ? -1
                 : (left.lastSeen - left.firstSeen) > (right.lastSeen - right.firstSeen) ? 1 : 0; break;
-            case 10: comparison = left.process.compare(right.process); break;
+            case 11: comparison = left.process.compare(right.process); break;
             default: break;
             }
             if (comparison == 0) comparison = leftHost.compare(rightHost);
@@ -169,6 +189,15 @@ namespace ui {
                 detailRow("Init RTT", "");
             }
             detailRow("Duration", formatDuration(flow.firstSeen, flow.lastSeen));
+            if (flow.key.protocol == "TCP") {
+                // Per direction and absolute here: the table already shows the
+                // combined rate, and when diagnosing you need to know which
+                // side is losing packets.
+                detailRow("Retrans", std::format("{} / {}",
+                    flow.retransmissionsUp, flow.retransmissionsDown));
+                detailRow("Reordered", std::format("{} / {}",
+                    flow.outOfOrderUp, flow.outOfOrderDown));
+            }
 
             ImGui::EndTable();
         }
@@ -258,7 +287,7 @@ namespace ui {
             | ImGuiTableFlags_Resizable
             | ImGuiTableFlags_Sortable;
 
-        if (ImGui::BeginTable("FlowsTable", 11, tableFlags)) {
+        if (ImGui::BeginTable("FlowsTable", 12, tableFlags)) {
             ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Country", ImGuiTableColumnFlags_WidthFixed, scaled(65.0f));
             ImGui::TableSetupColumn("Org", ImGuiTableColumnFlags_WidthFixed, scaled(180.0f));
@@ -268,6 +297,7 @@ namespace ui {
             ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, scaled(90.0f));
             ImGui::TableSetupColumn("Rate", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending, scaled(90.0f));
             ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, scaled(85.0f));
+            ImGui::TableSetupColumn("Loss", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, scaled(70.0f));
             ImGui::TableSetupColumn("Dur", ImGuiTableColumnFlags_WidthFixed, scaled(70.0f));
             ImGui::TableSetupColumn("App", ImGuiTableColumnFlags_WidthFixed, scaled(130.0f));
             ImGui::TableHeadersRow();
@@ -366,9 +396,29 @@ namespace ui {
                         ImGui::TextDisabled("--");
                     }
                     ImGui::TableSetColumnIndex(9);
+                    if (flow.key.protocol != "TCP") {
+                        // Only TCP carries the sequence numbers this is derived from.
+                        ImGui::TextDisabled("--");
+                    } else {
+                        const uint64_t problems = deliveryProblemsOf(flow);
+                        const double lossRate = deliveryProblemRateOf(flow);
+                        const ImVec4& lossColor = lossRate < 1.0 ? kSuccess
+                                                : lossRate < 3.0 ? kWarning : kDanger;
+                        ImGui::TextColored(lossColor, "%.1f%%", lossRate);
+                        if (problems > 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                            ImGui::SetTooltip(
+                                "%llu retransmitted, %llu out of order, of %llu packets",
+                                static_cast<unsigned long long>(
+                                    flow.retransmissionsUp + flow.retransmissionsDown),
+                                static_cast<unsigned long long>(
+                                    flow.outOfOrderUp + flow.outOfOrderDown),
+                                static_cast<unsigned long long>(flow.packets));
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(10);
                     const std::string duration = formatDuration(flow.firstSeen, flow.lastSeen);
                     ImGui::TextUnformatted(duration.c_str());
-                    ImGui::TableSetColumnIndex(10);
+                    ImGui::TableSetColumnIndex(11);
                     if (flow.process.empty()) {
                         ImGui::TextDisabled("--");
                     } else {
