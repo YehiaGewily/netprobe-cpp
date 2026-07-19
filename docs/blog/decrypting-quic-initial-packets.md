@@ -396,6 +396,41 @@ The ClientHello parse is [`QuicParser.cpp:258`](../../src/core/QuicParser.cpp#L2
 
 With a contiguous ClientHello you are back in ordinary TLS 1.3 territory: skip `legacy_version` (2 bytes) and `random` (32), then the variable-length session ID, cipher suites, and compression methods, to reach the extension list. Find extension type `0x0000`, server_name, and read the first `host_name` entry.
 
+Every hop below is a length read from the network, and every one is a place to walk off the end of the buffer:
+
+```
+   ClientHello body
+   +--------------------------------+
+   | legacy_version          2      |  skip
+   | random                 32      |  skip
+   | session_id_len          1  ----+-> session_id      (variable)  skip
+   | cipher_suites_len       2  ----+-> cipher_suites   (variable)  skip
+   | compression_len         1  ----+-> compression     (variable)  skip
+   | extensions_len          2  ----+-> extension list
+   +--------------------------------+
+                                    |
+                                    v
+   extension list (walk until extensions_len is consumed)
+   +----------------+----------------+---------------------------+
+   | ext_type   2   | ext_len    2   | ext_data      (ext_len)   |
+   +----------------+----------------+---------------------------+
+            |
+            | ext_type == 0x0000  (server_name)
+            v
+   +--------------------------------+
+   | server_name_list_len    2      |
+   | name_type               1      |  0x00 = host_name
+   | host_name_len           2      |
+   | host_name          (len)       |  <-- the answer
+   +--------------------------------+
+```
+
+The nesting is what makes this hazardous: `host_name_len` must fit inside the
+server_name entry, which must fit inside `ext_len`, which must fit inside
+`extensions_len`, which must fit inside the reassembled buffer. A check at
+only the innermost level passes for a packet that has already lied at the
+outermost one.
+
 Every one of those length fields comes from the network. Each one gets bounds-checked against the buffer, and any inconsistency aborts the parse rather than clamping and continuing — a parser that "recovers" from a malformed length is a parser that eventually reports a hostname assembled from adjacent memory.
 
 ---
