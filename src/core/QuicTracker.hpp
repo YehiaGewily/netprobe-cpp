@@ -30,7 +30,7 @@ namespace core {
         size_t trackedConnectionCount() const { return m_connections.size(); }
 
     private:
-        static constexpr size_t kMaxStreamBytes = 64 * 1024;
+        static constexpr size_t kMaxStreamBytes = size_t{64} * 1024;
         static constexpr int64_t kConnectionTimeoutMicroseconds = 10'000'000;
         static constexpr size_t kMaxTrackedConnections = 1'024;
 

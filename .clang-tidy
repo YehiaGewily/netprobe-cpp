@@ -1,0 +1,63 @@
+# Static analysis configuration.
+#
+# Curated for signal rather than coverage: every check enabled here is one
+# whose findings are worth reading. Checks that fire constantly on idiomatic
+# code are disabled outright instead of being silenced with NOLINT at each
+# site, because a warning nobody acts on trains everyone to ignore the tool.
+---
+Checks: >
+  bugprone-*,
+  performance-*,
+  clang-analyzer-*,
+  misc-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-emplace,
+  modernize-loop-convert,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-branch-clone,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -misc-include-cleaner,
+  -misc-use-anonymous-namespace,
+  -misc-const-correctness,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -performance-enum-size,
+  -clang-analyzer-optin.performance.Padding
+
+# The tree is clean under this configuration, so anything new is a
+# regression and should fail the build rather than scroll past in a log.
+WarningsAsErrors: '*'
+
+# Only first-party headers. Without this, findings from the FetchContent'd
+# ImGui, Mbed TLS, and libmaxminddb headers drown out our own.
+HeaderFilterRegex: '.*[/\\](src|include)[/\\].*'
+
+# clang-tidy must not rewrite formatting; that belongs to the author.
+FormatStyle: none
+
+# Notes on the disabled checks above:
+#   performance-enum-size            shrinking enum base types saves bytes that
+#                                    do not matter here and invites surprising
+#                                    implicit conversions.
+#   clang-analyzer-optin.performance.Padding
+#                                    advises reordering members by size. It is
+#                                    aimed at objects allocated in bulk; the
+#                                    class it fires on has exactly one instance,
+#                                    so it would trade a readable, logically
+#                                    grouped header for ~48 bytes.
+#   misc-const-correctness           proposes const on nearly every local.
+#   misc-include-cleaner             cannot see through the pinned third-party
+#                                    headers pulled in by FetchContent.
+
+CheckOptions:
+  # NetProbe uses lowerCamelCase for functions and locals, m_ for members,
+  # and UpperCamelCase for types. Naming checks are not enabled above, but
+  # recording the convention here documents it for anyone who turns them on.
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: m_

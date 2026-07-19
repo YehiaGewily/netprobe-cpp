@@ -10,18 +10,30 @@
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace ui {
 
     GuiLayer::GuiLayer(core::PacketQueue& queue) : m_queue(queue) {}
 
     GuiLayer::~GuiLayer() {
-        captureWindowGeometry();
-        saveSettings();
+        // Persisting preferences touches the filesystem, and an exception
+        // escaping a destructor terminates the process. Losing the saved
+        // window geometry is an acceptable outcome; crashing on exit is not.
+        try {
+            captureWindowGeometry();
+            saveSettings();
+        } catch (...) {
+            // Reported with fputs rather than iostreams: this runs during
+            // shutdown, where anything that can throw defeats the point.
+            std::fputs("NetProbe: could not save window geometry or preferences.\n", stderr);
+        }
+
         if (m_window) {
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -62,7 +74,7 @@ namespace ui {
             height = static_cast<int>(height * scaleY);
         }
 
-        m_window = glfwCreateWindow(width, height, "NetProbe  -  Network Analyzer", NULL, NULL);
+        m_window = glfwCreateWindow(width, height, "NetProbe  -  Network Analyzer", nullptr, nullptr);
         if (!m_window) {
             glfwTerminate();
             return false;
@@ -124,7 +136,7 @@ namespace ui {
 
         m_nfdInitialized = NFD_Init() == NFD_OKAY;
         if (!m_nfdInitialized) {
-            std::cerr << "Native file dialog is unavailable: " << NFD_GetError() << std::endl;
+            std::cerr << "Native file dialog is unavailable: " << NFD_GetError() << '\n';
         }
 
         IMGUI_CHECKVERSION();
@@ -197,7 +209,11 @@ namespace ui {
                 }
             } else if (key == "window") {
                 int x = 0, y = 0, w = 0, h = 0, maximized = 0;
-                if (std::sscanf(value.c_str(), "%d %d %d %d %d", &x, &y, &w, &h, &maximized) == 5) {
+                // Extracted rather than scanf'd: type-safe, and it avoids the
+                // MSVC deprecation of sscanf without reaching for the
+                // Windows-only sscanf_s.
+                std::istringstream fields(value);
+                if (fields >> x >> y >> w >> h >> maximized) {
                     m_savedWindowX = x;
                     m_savedWindowY = y;
                     m_savedWindowW = w;
@@ -646,7 +662,7 @@ namespace ui {
             openPcapFile(selectedPath);
             NFD_FreePathU8(selectedPath);
         } else if (result == NFD_ERROR) {
-            std::cerr << "Unable to open file dialog: " << NFD_GetError() << std::endl;
+            std::cerr << "Unable to open file dialog: " << NFD_GetError() << '\n';
         }
     }
 

@@ -1,11 +1,13 @@
+#include <cstdio>
+#include <exception>
 #include <iostream>
 #include <vector>
 #include "capture/CaptureEngine.hpp"
 #include "core/PacketQueue.hpp"
 #include "ui/GuiLayer.hpp"
 
-int main() {
-    std::cout << "Starting NetProbe..." << std::endl;
+static int run() {
+    std::cout << "Starting NetProbe..." << '\n';
 
     // 1. Initialize Core Components
     core::PacketQueue queue;
@@ -14,11 +16,12 @@ int main() {
     // 2. Select Network Adapter
     auto devices = engine.getAvailableDevices();
     if (devices.empty()) {
-        std::cerr << "No live network devices found. Offline PCAP loading is still available." << std::endl;
+        std::cerr << "No live network devices found. Offline PCAP loading is still available." << '\n';
     }
 
     // Convert capture::DeviceInfo to ui::GuiLayer::DeviceInfo
     std::vector<ui::GuiLayer::DeviceInfo> uiDevices;
+    uiDevices.reserve(devices.size());
     for (const auto& d : devices) {
         uiDevices.push_back({d.name, d.description});
     }
@@ -30,25 +33,25 @@ int main() {
     gui.setDevices(uiDevices);
 
     if (!gui.init()) {
-        std::cerr << "Failed to initialize GUI." << std::endl;
+        std::cerr << "Failed to initialize GUI." << '\n';
         return 1;
     }
 
     // Handle Device Selection only after the UI is ready to consume packets.
-    gui.onDeviceSelected = [&](std::string deviceName) {
-        std::cout << "Switching to device: " << deviceName << std::endl;
+    gui.onDeviceSelected = [&](const std::string& deviceName) {
+        std::cout << "Switching to device: " << deviceName << '\n';
         engine.startCapture(deviceName);
     };
 
     gui.onCaptureStopRequested = [&]() {
-        std::cout << "Stopping live capture." << std::endl;
+        std::cout << "Stopping live capture." << '\n';
         engine.stopCapture();
     };
 
-    gui.onPcapFileSelected = [&](std::string path) {
-        std::cout << "Loading capture file: " << path << std::endl;
+    gui.onPcapFileSelected = [&](const std::string& path) {
+        std::cout << "Loading capture file: " << path << '\n';
         if (!engine.openFile(path)) {
-            std::cerr << "Failed to load capture file." << std::endl;
+            std::cerr << "Failed to load capture file." << '\n';
         }
     };
 
@@ -62,7 +65,7 @@ int main() {
 
     // Auto-start on the first device when live capture is available.
     if (!devices.empty()) {
-        std::cout << "Auto-selecting device: " << devices[0].description << std::endl;
+        std::cout << "Auto-selecting device: " << devices[0].description << '\n';
         engine.startCapture(devices[0].name);
         gui.setCaptureActive(true);
     }
@@ -71,6 +74,23 @@ int main() {
     gui.run();
 
     // 5. Shutdown (RAII handles engine/thread stop)
-    std::cout << "NetProbe shutting down." << std::endl;
+    std::cout << "NetProbe shutting down." << '\n';
     return 0;
+}
+
+int main() {
+    // An exception escaping main terminates with no diagnostic at all, which
+    // for a windowed application means the window simply vanishes. Report it
+    // on a path that cannot itself throw, so the user has something to go on.
+    try {
+        return run();
+    } catch (const std::exception& error) {
+        std::fputs("NetProbe: unexpected failure: ", stderr);
+        std::fputs(error.what(), stderr);
+        std::fputs("\n", stderr);
+        return 1;
+    } catch (...) {
+        std::fputs("NetProbe: unexpected failure\n", stderr);
+        return 1;
+    }
 }

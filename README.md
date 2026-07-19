@@ -2,7 +2,16 @@
 
 A real-time and offline network traffic analyzer built with **Modern C++20**, **Npcap/libpcap**, and **Dear ImGui**.
 
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg) ![Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![CI](https://github.com/YehiaGewily/netprobe-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/YehiaGewily/netprobe-cpp/actions/workflows/ci.yml) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg) ![Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+> Every push is built on Windows, Linux, and macOS, run under AddressSanitizer and UndefinedBehaviorSanitizer, checked with clang-tidy, and fuzzed with libFuzzer.
+
+<!--
+  TODO(screenshots): a hero image belongs here — see plans/IMPLEMENTATION_PLAN.md
+  Phase 1. Capture at 1600x900 in the dark theme, save under docs/screenshots/,
+  and reference them here and beside the feature list below.
+-->
+
 
 ## Download
 
@@ -46,7 +55,7 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 - **GeoIP/ASN**: [libmaxminddb](https://github.com/maxmind/libmaxminddb)
 - **File dialogs**: [Native File Dialog Extended](https://github.com/btzy/nativefiledialog-extended)
 - **Build System**: CMake (all third-party deps pinned via `FetchContent`)
-- **Tests / fuzzing**: GoogleTest + libFuzzer harness on `ProtocolParser` and `DNSParser`
+- **Tests / fuzzing / analysis**: GoogleTest + libFuzzer harness on the protocol parsers + clang-tidy
 
 
 ## Prerequisites
@@ -198,6 +207,7 @@ flowchart LR
 - **Adversarial input suite**: 35 named malformed-packet fixtures — headers claiming lengths the buffer does not contain, IPv4 IHL and total-length lies, IPv6 extension-header chains that overrun or self-reference, DNS compression-pointer loops and inflated record counts, truncated TLS records, QUIC connection-ID and token lengths beyond the packet — plus an exhaustive check that every prefix of a valid frame parses without crashing. The same fixtures seed the fuzz corpus.
 - **libFuzzer harness** on `ProtocolParser::parse`, `DNSParser::parseResponse`, and the stateful `TlsReassembler` / `QuicTracker`, across every supported link type, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
 - **AddressSanitizer + UndefinedBehaviorSanitizer** CI job runs the full test suite under ASan/UBSan on every push.
+- **clang-tidy static analysis** in CI over every first-party source, with `WarningsAsErrors` enabled: the tree is clean, so a new finding fails the build rather than scrolling past in a log. Checks are curated for signal — those that fire constantly on idiomatic code are disabled in `.clang-tidy` with the reasoning recorded there, rather than silenced case by case.
 - **Three-platform CI matrix** (Windows / Ubuntu / macOS) builds the app, builds and runs the test suite, and packages release ZIPs via CPack on tag pushes. Windows test runs use a 7-Zip-extracted Npcap user-mode DLL so the kernel-driver install is unnecessary in CI.
 
 ## Contributing

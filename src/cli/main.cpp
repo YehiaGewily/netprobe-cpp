@@ -15,7 +15,9 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -371,13 +373,13 @@ namespace {
 
 } // namespace
 
-int main(int argc, char** argv) {
+static int run(int argc, char** argv) {
     const auto parsed = parseArguments(argc, argv);
     if (!parsed) {
         std::cerr << "Try 'netprobe-cli --help'.\n";
         return kExitUsage;
     }
-    const Options options = *parsed;
+    const Options& options = *parsed;
 
     if (options.showHelp) {
         printUsage(std::cout);
@@ -419,4 +421,23 @@ int main(int argc, char** argv) {
               << (options.outputPath == "-" ? std::string{"stdout"} : options.outputPath)
               << " as " << (format == OutputFormat::Csv ? "CSV" : "JSON") << ".\n";
     return kExitSuccess;
+}
+
+int main(int argc, char** argv) {
+    // An exception escaping main terminates with no diagnostic at all, which
+    // for a tool run from a script means a bare failure code and no clue why.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& error) {
+        // Reported without iostreams deliberately: a handler that can itself
+        // throw would let the exception escape after all, which is the whole
+        // thing this is here to prevent. std::fputs does not throw.
+        std::fputs("netprobe-cli: unexpected failure: ", stderr);
+        std::fputs(error.what(), stderr);
+        std::fputs("\n", stderr);
+        return kExitRuntime;
+    } catch (...) {
+        std::fputs("netprobe-cli: unexpected failure\n", stderr);
+        return kExitRuntime;
+    }
 }

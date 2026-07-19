@@ -33,7 +33,7 @@ namespace core {
 
     private:
         // Beyond this a "ClientHello" is either malicious or not a ClientHello.
-        static constexpr size_t kMaxBufferedBytes = 64 * 1024;
+        static constexpr size_t kMaxBufferedBytes = size_t{64} * 1024;
         // Stop tracking a stream that has gone quiet, so a long capture does not
         // accumulate half-finished handshakes forever.
         static constexpr int64_t kStreamTimeoutMicroseconds = 30'000'000;

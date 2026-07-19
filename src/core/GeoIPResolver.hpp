@@ -25,8 +25,8 @@ namespace core {
     class GeoIPResolver {
     public:
         explicit GeoIPResolver(size_t cacheCapacity = 4'096);
-        GeoIPResolver(std::filesystem::path countryDatabasePath,
-            std::filesystem::path asnDatabasePath, size_t cacheCapacity = 4'096);
+        GeoIPResolver(const std::filesystem::path& countryDatabasePath,
+            const std::filesystem::path& asnDatabasePath, size_t cacheCapacity = 4'096);
         ~GeoIPResolver();
 
         GeoIPResolver(const GeoIPResolver&) = delete;

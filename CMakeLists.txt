@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
 
+# Emit compile_commands.json for clang-tidy and editor tooling. Note that the
+# Visual Studio generator ignores this; use Ninja when you need the database
+# (see the clang-tidy CI job).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # AddressSanitizer + UndefinedBehaviorSanitizer for local debug runs and CI.
 # Clang/GCC only; MSVC ASan has compatibility caveats with the third-party
 # CMake projects we pull in, so we restrict this to non-MSVC compilers.

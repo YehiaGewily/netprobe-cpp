@@ -77,13 +77,13 @@ namespace ui {
         void setCaptureActive(bool active) { m_captureActive = active; }
 
         // Callback to start capture on new device
-        std::function<void(std::string)> onDeviceSelected;
+        std::function<void(const std::string&)> onDeviceSelected;
 
         // Callback to stop the running live capture.
         std::function<void()> onCaptureStopRequested;
 
         // Callback to load an offline capture file.
-        std::function<void(std::string)> onPcapFileSelected;
+        std::function<void(const std::string&)> onPcapFileSelected;
 
         // Callbacks for live BPF filtering and exporting the retained raw session.
         std::function<bool(const std::string&, std::string&)> onBpfFilterRequested;
