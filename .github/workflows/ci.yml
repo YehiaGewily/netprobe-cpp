@@ -139,8 +139,18 @@ jobs:
           CXX: clang++
         run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_SANITIZERS=ON -DBUILD_TESTING=ON
 
-      - name: Build tests
-        run: cmake --build build-asan --target NetProbeTests --parallel
+      # NetProbeCli and the sample capture are needed too: the CTest suite
+      # includes end-to-end cases that run the real CLI binary over
+      # data/sample.pcap. Building only NetProbeTests leaves both missing and
+      # those cases fail before they execute anything.
+      #
+      # Building the CLI here is worth more than making the tests skip: it puts
+      # the whole file -> parse -> aggregate -> export path under the
+      # sanitizers, which is the path that handles untrusted bytes.
+      - name: Build tests, CLI, and sample capture
+        run: |
+          cmake --build build-asan --parallel \
+            --target NetProbeTests NetProbeCli NetProbeSamplePcap
 
       - name: Run tests under ASan + UBSan
         env:

@@ -186,6 +186,11 @@ namespace core {
         for (uint16_t answer = 0; answer < answerCount; ++answer) {
             const auto name = readName(message, size, position);
             if (!name || size - position < 10) return std::nullopt;
+            // Bound once, immediately after the guard, rather than
+            // dereferencing the optional at each of the record types below.
+            // Clearer, and it keeps clang-tidy's optional-access analysis from
+            // losing track of the guard across the TXT chunk loop.
+            const std::string& owner = *name;
 
             const uint16_t type = readU16(message + position);
             // mDNS reuses the top class bit as a cache-flush flag, so compare
@@ -200,13 +205,13 @@ namespace core {
                 switch (type) {
                 case rrA:
                     if (dataLength == 4) {
-                        response.answers.push_back({DNSRecordType::A, *name,
+                        response.answers.push_back({DNSRecordType::A, owner,
                             addressToString(AF_INET, message + position), 0});
                     }
                     break;
                 case rrAaaa:
                     if (dataLength == 16) {
-                        response.answers.push_back({DNSRecordType::AAAA, *name,
+                        response.answers.push_back({DNSRecordType::AAAA, owner,
                             addressToString(AF_INET6, message + position), 0});
                     }
                     break;
@@ -214,7 +219,7 @@ namespace core {
                     size_t cursor = position;
                     const auto canonicalName = readName(message, size, cursor);
                     if (canonicalName && cursor <= recordEnd) {
-                        response.answers.push_back({DNSRecordType::CNAME, *name, *canonicalName, 0});
+                        response.answers.push_back({DNSRecordType::CNAME, owner, *canonicalName, 0});
                     }
                     break;
                 }
@@ -222,7 +227,7 @@ namespace core {
                     size_t cursor = position;
                     const auto target = readName(message, size, cursor);
                     if (target && cursor <= recordEnd && !target->empty()) {
-                        response.answers.push_back({DNSRecordType::PTR, *name, *target, 0});
+                        response.answers.push_back({DNSRecordType::PTR, owner, *target, 0});
                     }
                     break;
                 }
@@ -233,7 +238,7 @@ namespace core {
                     size_t cursor = position + 6;
                     const auto target = readName(message, size, cursor);
                     if (target && cursor <= recordEnd && !target->empty()) {
-                        response.answers.push_back({DNSRecordType::SRV, *name,
+                        response.answers.push_back({DNSRecordType::SRV, owner,
                             *target + ":" + std::to_string(port), priority});
                     }
                     break;
@@ -251,7 +256,7 @@ namespace core {
                         cursor += chunkLength;
                     }
                     if (!text.empty()) {
-                        response.answers.push_back({DNSRecordType::TXT, *name, text, 0});
+                        response.answers.push_back({DNSRecordType::TXT, owner, text, 0});
                     }
                     break;
                 }
@@ -265,8 +270,8 @@ namespace core {
                     if (ech) response.encryptedClientHelloAdvertised = true;
                     response.answers.push_back({
                         type == rrHttps ? DNSRecordType::HTTPS : DNSRecordType::SVCB,
-                        *name,
-                        target && !target->empty() ? *target : *name,
+                        owner,
+                        target && !target->empty() ? *target : owner,
                         priority});
                     break;
                 }
