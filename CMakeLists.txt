@@ -134,6 +134,7 @@ set(NETPROBE_CORE_SOURCES
     src/capture/CaptureEngine.cpp
     src/capture/LibpcapBackend.cpp
     src/capture/NpcapBackend.cpp
+    src/core/AnalysisSession.cpp
     src/core/DNSParser.cpp
     src/core/FlowAggregator.cpp
     src/core/GeoIPResolver.cpp
@@ -146,6 +147,7 @@ set(NETPROBE_CORE_SOURCES
     src/capture/CaptureEngine.hpp
     src/capture/ICaptureBackend.hpp
     src/capture/PcapPlatform.hpp
+    src/core/AnalysisSession.hpp
     src/core/DNSParser.hpp
     src/core/FlowAggregator.hpp
     src/core/GeoIPResolver.hpp
@@ -293,6 +295,7 @@ if(BUILD_TESTING)
     enable_testing()
     add_executable(NetProbeTests
         tests/parser_test.cpp
+        tests/analysis_session_test.cpp
     )
     # src/, pcap headers, and the crypto/geo libraries all arrive through
     # NetProbeCore's PUBLIC usage requirements.

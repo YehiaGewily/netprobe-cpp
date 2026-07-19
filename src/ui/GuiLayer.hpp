@@ -1,14 +1,11 @@
 #pragma once
 
+#include "core/AnalysisSession.hpp"
 #include "core/PacketData.hpp"
 #include "core/PacketQueue.hpp"
 #include "core/ParsedPacket.hpp"
-#include "core/HostnameCache.hpp"
 #include "core/FlowAggregator.hpp"
 #include "core/GeoIPResolver.hpp"
-#include "core/ProcessResolver.hpp"
-#include "core/QuicTracker.hpp"
-#include "core/TlsReassembler.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -144,19 +141,12 @@ namespace ui {
         std::map<std::string, int> m_appCounts;
         std::map<std::string, uint64_t> m_protocolCounts;
         std::map<std::string, uint64_t> m_protocolBytes;
-        core::HostnameCache m_hostnameCache;
-        core::FlowAggregator m_flowAggregator;
+        // Capture analysis: parsing, SNI recovery, DNS, flows, and process
+        // attribution. The GUI owns only presentation state on top of it.
+        core::AnalysisSession m_session;
+        // Display-only enrichment, so it stays out of the shared session.
         core::GeoIPResolver m_geoIPResolver;
-        core::ProcessResolver m_processResolver;
-        core::TlsReassembler m_tlsReassembler;
-        core::QuicTracker m_quicTracker;
 
-        // Encrypted-DNS visibility. When resolution moves to DoH/DoT/DoQ the
-        // hostname cache stops filling, and the UI should say so rather than
-        // silently showing bare IP addresses.
-        uint64_t m_plaintextDnsResponses = 0;
-        uint64_t m_encryptedDnsPackets = 0;
-        bool m_echAdvertised = false;
         bool m_dnsNoticeDismissed = false;
         ScrollingBuffer m_bandwidthData;
         ScrollingBuffer m_tcpBandwidth;

@@ -55,7 +55,7 @@ namespace ui {
     }
 
     bool GuiLayer::exportFlowsCsv(const std::string& path, std::string& error) {
-        const auto flows = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+        const auto flows = m_session.flows(currentUnixTimeMicroseconds());
         std::ofstream file(path, std::ios::trunc);
         if (!file) {
             error = "Unable to open the destination file for writing.";
@@ -102,7 +102,7 @@ namespace ui {
         if (m_lastFlowsRefresh >= 0.0 && now - m_lastFlowsRefresh < 0.5) return;
         m_lastFlowsRefresh = now;
 
-        m_flowsCache = m_flowAggregator.snapshot(currentUnixTimeMicroseconds());
+        m_flowsCache = m_session.flows(currentUnixTimeMicroseconds());
         m_activeFlowCount = m_flowsCache.size();
 
         // The geo cache persists across refreshes so each destination IP is

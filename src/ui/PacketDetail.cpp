@@ -207,9 +207,9 @@ namespace ui {
             if (!p.hostname.empty()) {
                 kv("Host header", p.hostname);
             }
-            if (auto host = m_hostnameCache.lookup(p.dstIP)) {
+            if (auto host = m_session.lookupHostname(p.dstIP)) {
                 kv("Hostname", *host);
-            } else if (auto host2 = m_hostnameCache.lookup(p.srcIP)) {
+            } else if (auto host2 = m_session.lookupHostname(p.srcIP)) {
                 kv("Hostname", *host2);
             } else {
                 kv("Hostname", "");

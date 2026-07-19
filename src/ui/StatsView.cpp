@@ -67,21 +67,23 @@ namespace ui {
             // this view can be labelled at all, so it goes first.
             ImGui::TextColored(kText3, "NAME RESOLUTION");
             ImGui::Dummy(ImVec2(0, 4));
-            if (m_plaintextDnsResponses == 0 && m_encryptedDnsPackets == 0) {
+            const uint64_t plaintextDns = m_session.plaintextDnsResponses();
+            const uint64_t encryptedDns = m_session.encryptedDnsPackets();
+            if (plaintextDns == 0 && encryptedDns == 0) {
                 ImGui::TextColored(kText3, "No DNS observed yet.");
             } else {
                 ImGui::TextColored(kText2, "Plaintext DNS responses");
                 ImGui::SameLine(220.0f);
-                ImGui::TextColored(kText1, "%s", formatCount(m_plaintextDnsResponses).c_str());
+                ImGui::TextColored(kText1, "%s", formatCount(plaintextDns).c_str());
 
                 ImGui::TextColored(kText2, "Encrypted DNS sightings");
                 ImGui::SameLine(220.0f);
-                ImGui::TextColored(m_encryptedDnsPackets > 0 ? kWarning : kText1,
-                    "%s", formatCount(m_encryptedDnsPackets).c_str());
+                ImGui::TextColored(encryptedDns > 0 ? kWarning : kText1,
+                    "%s", formatCount(encryptedDns).c_str());
 
                 ImGui::TextColored(kText2, "Encrypted Client Hello");
                 ImGui::SameLine(220.0f);
-                if (m_echAdvertised) {
+                if (m_session.echAdvertised()) {
                     ImGui::TextColored(kWarning, "advertised");
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
                         ImGui::SetTooltip(
