@@ -1,9 +1,18 @@
 #include "core/GeoIPResolver.hpp"
 
 #include <filesystem>
+#include <format>
 #include <maxminddb.h>
 
 namespace core {
+
+    std::string organizationLabel(const GeoIPInfo& info) {
+        if (info.organization.empty()) return std::string{"-"};
+        return info.asn == 0
+            ? info.organization
+            : std::format("AS{} {}", info.asn, info.organization);
+    }
+
     namespace {
         std::filesystem::path geoIpDataDirectory() {
 #ifdef NETPROBE_GEOIP_DATA_DIR

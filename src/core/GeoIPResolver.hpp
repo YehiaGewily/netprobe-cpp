@@ -17,6 +17,11 @@ namespace core {
         std::string organization;
     };
 
+    // Human-readable owner label, e.g. "AS15169 Google LLC", or "-" when the
+    // organization is unknown. Shared so the flow table and the exported files
+    // cannot disagree about how a network is named.
+    std::string organizationLabel(const GeoIPInfo& info);
+
     class GeoIPResolver {
     public:
         explicit GeoIPResolver(size_t cacheCapacity = 4'096);

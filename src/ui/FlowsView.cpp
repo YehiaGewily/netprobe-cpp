@@ -1,6 +1,7 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
 #include "core/FlowAggregator.hpp"
+#include "core/FlowExporter.hpp"
 #include "core/GeoIPResolver.hpp"
 #include "imgui.h"
 #include "implot.h"
@@ -18,23 +19,7 @@ namespace ui {
 
     namespace {
 
-        std::string csvEscape(const std::string& value) {
-            if (value.find_first_of(",\"\n") == std::string::npos) return value;
-            std::string escaped = "\"";
-            for (char c : value) {
-                if (c == '"') escaped += "\"\"";
-                else escaped += c;
-            }
-            escaped += '"';
-            return escaped;
-        }
-
-        std::string organizationLabelFor(const core::GeoIPInfo& info) {
-            if (info.organization.empty()) return std::string{"-"};
-            return info.asn == 0
-                ? info.organization
-                : std::format("AS{} {}", info.asn, info.organization);
-        }
+        using core::organizationLabel;
 
         // Two-column key/value row used by the flow detail pane.
         void detailRow(const char* key, const std::string& value) {
@@ -55,43 +40,8 @@ namespace ui {
     }
 
     bool GuiLayer::exportFlowsCsv(const std::string& path, std::string& error) {
-        const auto flows = m_session.flows(currentUnixTimeMicroseconds());
-        std::ofstream file(path, std::ios::trunc);
-        if (!file) {
-            error = "Unable to open the destination file for writing.";
-            return false;
-        }
-        file << "host,src_ip,src_port,dst_ip,dst_port,protocol,service,process,country,organization,"
-                "packets,bytes_up,bytes_down,rate_bytes_per_sec,initial_rtt_ms,duration_sec\n";
-        for (const auto& flow : flows) {
-            const auto geo = m_geoIPResolver.lookup(flow.key.dstIP);
-            const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
-            const double rttMs = flow.initialRttMicroseconds > 0
-                ? static_cast<double>(flow.initialRttMicroseconds) / 1000.0
-                : 0.0;
-            const int64_t durationSec = std::max<int64_t>(0, (flow.lastSeen - flow.firstSeen) / 1'000'000);
-            file << csvEscape(host) << ','
-                 << flow.key.srcIP << ','
-                 << flow.key.srcPort << ','
-                 << flow.key.dstIP << ','
-                 << flow.key.dstPort << ','
-                 << flow.key.protocol << ','
-                 << csvEscape(flow.service) << ','
-                 << csvEscape(flow.process) << ','
-                 << csvEscape(geo.country) << ','
-                 << csvEscape(organizationLabelFor(geo)) << ','
-                 << flow.packets << ','
-                 << flow.bytesUp << ','
-                 << flow.bytesDown << ','
-                 << std::format("{:.1f}", flow.rateBytesPerSecond) << ','
-                 << std::format("{:.2f}", rttMs) << ','
-                 << durationSec << '\n';
-        }
-        if (!file.good()) {
-            error = "Writing the CSV file failed.";
-            return false;
-        }
-        return true;
+        return core::FlowExporter::writeCsv(m_session.flows(currentUnixTimeMicroseconds()),
+            path, error, &m_geoIPResolver);
     }
 
     // Refresh the shared flow snapshot on a 0.5s cadence. Copying every flow,
@@ -132,8 +82,8 @@ namespace ui {
             const auto& rightGeo = geoFor(right.key.dstIP);
             const std::string leftCountry = leftGeo.country.empty() ? "-" : leftGeo.country;
             const std::string rightCountry = rightGeo.country.empty() ? "-" : rightGeo.country;
-            const std::string leftOrganization = organizationLabelFor(leftGeo);
-            const std::string rightOrganization = organizationLabelFor(rightGeo);
+            const std::string leftOrganization = organizationLabel(leftGeo);
+            const std::string rightOrganization = organizationLabel(rightGeo);
             const uint64_t leftBytes = left.bytesUp + left.bytesDown;
             const uint64_t rightBytes = right.bytesUp + right.bytesDown;
 
@@ -205,7 +155,7 @@ namespace ui {
             detailRow("Protocol", flow.key.protocol);
             detailRow("Process", flow.process);
             detailRow("Country", geo.country.empty() ? "-" : geo.country);
-            detailRow("Org", organizationLabelFor(geo));
+            detailRow("Org", organizationLabel(geo));
             // Name the direction by its endpoint rather than "up"/"down": for a
             // peer-to-peer flow neither side is the client.
             detailRow(std::format("{} sent", flow.key.srcIP).c_str(), formatBytes(flow.bytesUp));
@@ -338,7 +288,7 @@ namespace ui {
                     const std::string& host = flow.hostname.empty() ? flow.key.dstIP : flow.hostname;
                     const auto& geoInfo = geoFor(flow.key.dstIP);
                     const std::string country = geoInfo.country.empty() ? "-" : geoInfo.country;
-                    const std::string organization = organizationLabelFor(geoInfo);
+                    const std::string organization = organizationLabel(geoInfo);
                     const uint64_t totalBytes = flow.bytesUp + flow.bytesDown;
                     const bool selected = m_packetFlowFilter && *m_packetFlowFilter == flow.key;
 
