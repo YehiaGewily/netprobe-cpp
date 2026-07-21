@@ -6,13 +6,6 @@ A real-time and offline network traffic analyzer built with **Modern C++20**, **
 
 > Every push is built on Windows, Linux, and macOS, run under AddressSanitizer and UndefinedBehaviorSanitizer, checked with clang-tidy, and fuzzed with libFuzzer.
 
-<!--
-  TODO(screenshots): a hero image belongs here — see plans/IMPLEMENTATION_PLAN.md
-  Phase 1. Capture at 1600x900 in the dark theme, save under docs/screenshots/,
-  and reference them here and beside the feature list below.
--->
-
-
 ## Download
 
 Download the ZIP for your platform from [GitHub Releases](https://github.com/YehiaGewily/netprobe-cpp/releases). Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux and macOS releases require their system libpcap runtime.
@@ -140,9 +133,12 @@ netprobe-cli -r capture.pcap -o - | jq '.flows[] | select(.bytes_down > 100000)'
 | `-f, --filter <bpf>` | BPF capture filter, live capture only |
 | `-o, --output <path>` | Destination file, or `-` for stdout |
 | `--format <json\|csv>` | Override the format inferred from the extension |
-| `--duration <sec>` | Stop after this many seconds |
-| `--packet-count <n>` | Stop after this many packets |
+| `--duration <sec>` | Stop after this many seconds, live capture only |
+| `--packet-count <n>` | Stop after this many packets, live capture only |
 | `--no-process` | Skip the owning-process lookup |
+| `--list-devices` | List the capture adapters and exit |
+| `-h, --help` | Show the full usage text and exit |
+| `-V, --version` | Show the version and exit |
 
 Ctrl+C stops a live capture and still writes the output. Exit codes are `0` success, `1` usage error, `2` runtime failure, so scripts can tell a bad invocation from a failed capture. Diagnostics go to stderr, which keeps `-o -` output clean for piping.
 
@@ -219,5 +215,5 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build inst
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for the full text.
 
