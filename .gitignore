@@ -61,8 +61,10 @@ _CPack_Packages/
 *.ipr
 
 # --- Runtime / Application Output ---
+# Written by the app at exit; per-machine state, not project configuration.
 imgui.ini
 netprobe-layout.ini
+netprobe-settings.ini
 
 # --- GeoIP Data and Local Secrets ---
 # GeoLite databases are user-supplied/downloaded and must not be committed.
