@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-08-05
+
 ### Added
 - MIT `LICENSE` shipped in the repo and in every release package.
 - `THIRD_PARTY_LICENSES.md` with the license texts of all statically linked
@@ -79,7 +81,8 @@ with initial TCP RTT, GeoIP/ASN enrichment via GeoLite2, BPF capture filters,
 display filters, PCAP export, and a bundled `data/sample.pcap` for a
 no-privileges first run.
 
-[Unreleased]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/YehiaGewily/netprobe-cpp/releases/tag/v1.0.0
