@@ -10,6 +10,8 @@ A real-time and offline network traffic analyzer built with **Modern C++20**, **
 
 Download the ZIP for your platform from [GitHub Releases](https://github.com/YehiaGewily/netprobe-cpp/releases). Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux and macOS releases require their system libpcap runtime.
 
+Each release includes a `SHA256SUMS.txt` — verify your download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (or `Get-FileHash` on Windows). See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+
 ## Features
 
 - **Live and offline capture**: inspect an active adapter or drag a `.pcap` / `.pcapng` into the app (classic libpcap and modern PCAPNG both supported).
@@ -32,6 +34,7 @@ Download the ZIP for your platform from [GitHub Releases](https://github.com/Yeh
 
 | Live packet analysis | Connection flows | Offline PCAP mode |
 | --- | --- | --- |
+| ![Packet list with a selected TLS ClientHello, its SNI decode, and hex dump](docs/assets/live-packets.png) | ![Per-connection flows table with service, RTT, and flow detail pane](docs/assets/flows.png) | ![Dashboard after opening the bundled sample capture](docs/assets/offline-pcap.png) |
 | Protocol, hostname, and per-packet hex | Rate, service, GeoIP, and ASN | No administrator rights required |
 
 ## Tech Stack
@@ -213,7 +216,9 @@ flowchart LR
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions on each platform, how to run the same checks CI runs (tests, sanitizers, clang-tidy, fuzzing), and what review looks for in a tool that parses hostile input. It also lists some good first issues.
 
+Found a security issue? Please report it privately — see [SECURITY.md](SECURITY.md).
+
 ## License
 
-This project is licensed under the MIT License — see [LICENSE](LICENSE) for the full text.
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for the full text. Release packages also include [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), covering the statically linked dependencies.
 

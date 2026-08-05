@@ -1,0 +1,67 @@
+name: Bug report
+description: Something crashed, misparsed, or behaved wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! If you believe the bug is **exploitable**
+        (crash on a crafted capture, memory corruption), please use the
+        [private security form](https://github.com/YehiaGewily/netprobe-cpp/security/advisories/new)
+        instead of a public issue — see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: NetProbe version
+      description: From `netprobe-cli --version` or the GUI title bar.
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - GUI — live capture
+        - GUI — offline PCAP
+        - CLI (netprobe-cli)
+        - Build from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include exact error text or a screenshot where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open data/sample.pcap
+        2. Sort Flows by RTT
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: capture
+    attributes:
+      label: Capture file (if applicable)
+      description: >
+        For parsing bugs, a minimal PCAP that reproduces the issue is by far
+        the most useful thing you can attach (zip it first — GitHub rejects
+        bare .pcap). Only share captures you are comfortable making public;
+        they contain your traffic.
