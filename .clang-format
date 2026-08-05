@@ -1,0 +1,44 @@
+# NetProbe C++ style. Approximates the existing hand-written layout so adding
+# this config doesn't reformat the codebase wholesale. The CI format job runs
+# clang-format with --dry-run --Werror on src/ and tests/ to catch new drift.
+
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 110
+
+NamespaceIndentation: All
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: true
+
+BreakBeforeBraces: Attach
+BinPackParameters: true
+BinPackArguments: true
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+SpacesBeforeTrailingComments: 1
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+
+IncludeBlocks: Preserve
+SortIncludes: false
+SortUsingDeclarations: false
+
+FixNamespaceComments: true
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false

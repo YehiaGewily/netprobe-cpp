@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/YehiaGewily/netprobe-cpp/security/advisories/new
+    about: Please report exploitable issues privately, not as public issues.

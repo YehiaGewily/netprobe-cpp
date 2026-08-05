@@ -1,0 +1,10 @@
+// Windows resource file for NetProbe.exe.
+//
+// Resource ID 1 ICON is the convention Explorer uses to pick the executable's
+// primary icon (shown in File Explorer, taskbar, and shortcuts). The .ico file
+// referenced below should be a multi-resolution icon (typical sizes: 16x16,
+// 32x32, 48x48, 256x256) so Windows can pick the right one for each context.
+//
+// The CMake build only compiles this resource when resources/netprobe.ico
+// exists, so dropping in an icon and rebuilding is all that's needed.
+1 ICON "netprobe.ico"

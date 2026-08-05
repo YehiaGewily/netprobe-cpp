@@ -1,0 +1,331 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Hard cap so a hung step (e.g. a Windows installer waiting on a UAC
+    # prompt that never arrives) fails fast instead of burning the default
+    # 6-hour budget.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: windows-x64
+            build_testing: ON
+          - name: Ubuntu x64
+            os: ubuntu-latest
+            artifact: ubuntu-x64
+            build_testing: ON
+          - name: macOS
+            os: macos-latest
+            artifact: macos
+            build_testing: ON
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows Npcap SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest https://npcap.com/dist/npcap-sdk-1.13.zip -OutFile npcap-sdk.zip
+          Expand-Archive npcap-sdk.zip -DestinationPath C:\Npcap-SDK
+
+      - name: Install Ubuntu dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=${{ matrix.build_testing }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage Npcap runtime DLLs (Windows)
+        if: runner.os == 'Windows' && matrix.build_testing == 'ON'
+        shell: pwsh
+        run: |
+          # The Npcap silent installer hangs on the kernel-driver step in
+          # headless CI. We only need pcap_open_offline (a user-mode call) for
+          # the test suite, so we extract just the runtime DLLs straight out of
+          # the NSIS installer with 7-Zip and drop them next to the test exe.
+          # The installer embeds both x86 and x64 copies of each DLL; we
+          # disambiguate by reading the PE header rather than guessing from
+          # the extracted folder layout (which varies between NSIS plugins).
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://npcap.com/dist/npcap-1.79.exe -OutFile $env:TEMP\npcap.exe
+          $extractDir = "$env:TEMP\npcap-extracted"
+          & 'C:\Program Files\7-Zip\7z.exe' x $env:TEMP\npcap.exe "-o$extractDir" -y | Out-Null
+
+          function Get-DllMachine {
+            param([string]$Path)
+            $stream = [System.IO.File]::OpenRead($Path)
+            try {
+              $reader = New-Object System.IO.BinaryReader($stream)
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadUInt32()
+              $stream.Position = $peOffset + 4
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+
+          New-Item -ItemType Directory -Path build\Release -Force | Out-Null
+          foreach ($name in 'wpcap.dll', 'Packet.dll') {
+            $candidates = Get-ChildItem -Path $extractDir -Recurse -Filter $name
+            if (-not $candidates) {
+              throw "No copies of $name found inside the Npcap installer."
+            }
+            $x64 = $null
+            foreach ($cand in $candidates) {
+              $machine = Get-DllMachine -Path $cand.FullName
+              Write-Host ("  candidate {0,-60} machine=0x{1:X4}" -f $cand.FullName, $machine)
+              if ($machine -eq 0x8664) {
+                $x64 = $cand
+                break
+              }
+            }
+            if (-not $x64) {
+              throw "No 64-bit (AMD64) build of $name found in the Npcap installer."
+            }
+            Copy-Item $x64.FullName build\Release\
+            Write-Host "Staged x64 $($x64.FullName) -> build\Release\$name"
+          }
+
+      - name: Test
+        if: matrix.build_testing == 'ON'
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
+
+      # Extract the ZIP into a clean directory and use it the way a user
+      # would: check the layout, then run the CLI from inside it. Guards
+      # against dependency install rules leaking SDK files into the package
+      # (Mbed TLS once contributed 114 of its headers and static libs) and
+      # against shipping a binary that cannot start outside the build tree.
+      - name: Smoke-test extracted package
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip=(package/*.zip)
+          mkdir smoke
+          cd smoke
+          cmake -E tar xf "../${zip[0]}"
+
+          for f in README.md LICENSE THIRD_PARTY_LICENSES.md data/sample.pcap data/README.md; do
+            [ -f "$f" ] || { echo "::error::$f missing from package"; exit 1; }
+          done
+          for d in include lib; do
+            [ ! -e "$d" ] || { echo "::error::unexpected $d/ leaked into package"; exit 1; }
+          done
+          if [ -n "$(find data -name '*.mmdb' -o -name '*.tar.gz')" ]; then
+            echo "::error::local GeoIP files leaked into package"; exit 1
+          fi
+
+          # The runner has no Npcap in System32, so stage the DLLs the test
+          # step already fetched; a user machine gets them from the driver
+          # install instead.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp ../build/Release/wpcap.dll ../build/Release/Packet.dll .
+            cli=./netprobe-cli.exe
+          else
+            cli=./netprobe-cli
+          fi
+          "$cli" --version
+          "$cli" -r data/sample.pcap -o flows.json
+          [ -s flows.json ] || { echo "::error::flow export from extracted package is empty"; exit 1; }
+          grep -q '"flows"' flows.json
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: netprobe-${{ matrix.artifact }}
+          path: package/*.zip
+          if-no-files-found: error
+
+  sanitizers:
+    name: ASan + UBSan (Clang/Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+
+      - name: Configure with sanitizers
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_SANITIZERS=ON -DBUILD_TESTING=ON
+
+      # NetProbeCli and the sample capture are needed too: the CTest suite
+      # includes end-to-end cases that run the real CLI binary over
+      # data/sample.pcap. Building only NetProbeTests leaves both missing and
+      # those cases fail before they execute anything.
+      #
+      # Building the CLI here is worth more than making the tests skip: it puts
+      # the whole file -> parse -> aggregate -> export path under the
+      # sanitizers, which is the path that handles untrusted bytes.
+      - name: Build tests, CLI, and sample capture
+        run: |
+          cmake --build build-asan --parallel \
+            --target NetProbeTests NetProbeCli NetProbeSamplePcap
+
+      - name: Run tests under ASan + UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-asan -C RelWithDebInfo --output-on-failure
+
+  clang-tidy:
+    name: clang-tidy (static analysis)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+
+      # Ninja rather than the default generator: clang-tidy needs
+      # compile_commands.json, and configuring is enough to produce it
+      # (FetchContent populates its dependencies at configure time).
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-tidy -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+
+      # Analyse first-party sources only. Third-party code arrives through
+      # FetchContent and is not ours to fix; .clang-tidy's HeaderFilterRegex
+      # keeps their headers out of the report as well.
+      # Driving clang-tidy directly rather than through run-clang-tidy, which
+      # is packaged inconsistently across distributions.
+      #
+      # The pass/fail signal is the EXIT CODE, not the output. .clang-tidy
+      # sets WarningsAsErrors, so a finding fails the invocation; grepping the
+      # log for first-party paths instead would miss exactly the failures that
+      # matter, since a finding in a dependency header still fails the run.
+      - name: Run clang-tidy
+        run: |
+          clang-tidy --version
+          status=0
+          failed=""
+          while IFS= read -r file; do
+            echo "--- $file"
+            if ! clang-tidy -p build-tidy --quiet "$file"; then
+              status=1
+              failed="$failed $file"
+            fi
+          done < <(find src -name '*.cpp' | sort)
+          if [ "$status" -ne 0 ]; then
+            echo "::error::clang-tidy reported findings in:$failed"
+          fi
+          exit $status
+        shell: bash
+
+  fuzz:
+    name: Fuzz parser (60s)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Release -DBUILD_FUZZERS=ON -DBUILD_TESTING=OFF
+
+      - name: Build fuzz targets
+        run: cmake --build build-fuzz --target NetProbeFuzzerSeeds NetProbeParserFuzzer --parallel
+
+      - name: Seed corpus
+        run: ./build-fuzz/NetProbeFuzzerSeeds build-fuzz/corpus
+
+      - name: Fuzz parser for 60s
+        run: |
+          ./build-fuzz/NetProbeParserFuzzer build-fuzz/corpus \
+            -max_total_time=60 \
+            -print_final_stats=1 \
+            -timeout=10
+
+      - name: Upload crashes (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: |
+            crash-*
+            leak-*
+            oom-*
+            timeout-*
+          if-no-files-found: ignore
+
+  release:
+    name: Publish GitHub Release
+    # Sanitizers gate the release: a tag must not publish binaries while
+    # ASan/UBSan is red. clang-tidy and fuzz stay advisory.
+    needs: [build, sanitizers]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # gh release create --generate-notes invokes `git log` under the hood
+      # to compute the changelog between this tag and the previous one. That
+      # requires a real repo on disk (not just the workflow context), with
+      # full history so tags are visible. fetch-depth: 0 disables shallow
+      # clone so all tags come down.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: netprobe-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          release-assets/*.zip
+          release-assets/SHA256SUMS.txt
+          --generate-notes

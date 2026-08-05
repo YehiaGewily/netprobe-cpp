@@ -1,0 +1,46 @@
+<svg width="680" height="392" viewBox="0 0 680 392" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>NetProbe runtime architecture</title>
+<desc>Three layers: a capture layer with a backend interface over Npcap and libpcap, a core layer with a bounded packet queue, protocol parser, reassemblers and flow aggregator, and a UI layer of Dear ImGui views.</desc>
+<style>
+text{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif}
+.t{font-size:14px;fill:#14212e}
+.ts{font-size:12px;fill:#5B6472}
+.th{font-size:14px;font-weight:500;fill:#14212e}
+.hd{font-size:16px;font-weight:600;fill:#14212e}
+.arr{stroke:#7A8593;stroke-width:1.5;fill:none}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#7A8593" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="680" height="392" rx="12" fill="#ffffff" stroke="#E4E7EC"/>
+
+<text class="hd" x="24" y="30">NetProbe — runtime architecture</text>
+
+<rect x="24" y="46" width="200" height="316" rx="10" fill="#F6F7F9" stroke="#D9DEE4"/>
+<rect x="240" y="46" width="200" height="316" rx="10" fill="#F6F7F9" stroke="#D9DEE4"/>
+<rect x="456" y="46" width="200" height="316" rx="10" fill="#F6F7F9" stroke="#D9DEE4"/>
+
+<text class="ts" x="36" y="68">src/capture · capture thread</text>
+<text class="ts" x="252" y="68">src/core · processing</text>
+<text class="ts" x="468" y="68">src/ui · ImGui frame loop</text>
+
+<g><rect x="38" y="82" width="172" height="42" rx="7" fill="#E6F1FB" stroke="#2A6FB0"/><text class="th" x="124" y="108" text-anchor="middle">CaptureEngine</text></g>
+<g><rect x="38" y="136" width="172" height="42" rx="7" fill="#E6F1FB" stroke="#2A6FB0"/><text class="th" x="124" y="162" text-anchor="middle">ICaptureBackend</text></g>
+<g><rect x="38" y="190" width="172" height="42" rx="7" fill="#E6F1FB" stroke="#2A6FB0"/><text class="th" x="124" y="216" text-anchor="middle">NpcapBackend · Win</text></g>
+<g><rect x="38" y="244" width="172" height="42" rx="7" fill="#E6F1FB" stroke="#2A6FB0"/><text class="th" x="124" y="270" text-anchor="middle">LibpcapBackend · *nix</text></g>
+
+<g><rect x="254" y="82" width="172" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="340" y="101" text-anchor="middle">PacketQueue</text><text class="ts" x="340" y="116" text-anchor="middle">bounded · drop-oldest</text></g>
+<g><rect x="254" y="136" width="172" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="340" y="162" text-anchor="middle">ProtocolParser</text></g>
+<g><rect x="254" y="190" width="172" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="340" y="209" text-anchor="middle">TLS · QUIC · DNS</text><text class="ts" x="340" y="224" text-anchor="middle">reassembly + cache</text></g>
+<g><rect x="254" y="244" width="172" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="340" y="270" text-anchor="middle">FlowAggregator</text></g>
+<g><rect x="254" y="298" width="172" height="42" rx="7" fill="#E0F2F1" stroke="#2A9187"/><text class="th" x="340" y="324" text-anchor="middle">GeoIP · Process</text></g>
+
+<g><rect x="470" y="82" width="172" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="556" y="101" text-anchor="middle">GuiLayer</text><text class="ts" x="556" y="116" text-anchor="middle">dockspace + controls</text></g>
+<g><rect x="470" y="136" width="172" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="556" y="162" text-anchor="middle">Dashboard</text></g>
+<g><rect x="470" y="190" width="172" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="556" y="216" text-anchor="middle">FlowsView</text></g>
+<g><rect x="470" y="244" width="172" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="556" y="270" text-anchor="middle">PacketView · Detail</text></g>
+<g><rect x="470" y="298" width="172" height="42" rx="7" fill="#EDE7F6" stroke="#7E57C2"/><text class="th" x="556" y="324" text-anchor="middle">StatsView</text></g>
+
+<line class="arr" x1="224" y1="103" x2="252" y2="103" marker-end="url(#arrow)"/>
+<text class="ts" x="238" y="95" text-anchor="middle">push</text>
+<line class="arr" x1="440" y1="103" x2="468" y2="103" marker-end="url(#arrow)"/>
+<text class="ts" x="454" y="95" text-anchor="middle">drain</text>
+</svg>

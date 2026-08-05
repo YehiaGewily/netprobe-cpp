@@ -1,0 +1,119 @@
+# =========================================================================
+# NetProbe Git Ignore Rules
+# =========================================================================
+
+# --- CMake / Build Outputs ---
+/build*/
+/out/
+CMakeCache.txt
+CMakeFiles/
+CMakeSettings.json
+CMakeUserPresets.json
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
+_CPack_Packages/
+*.zip
+
+# --- Compiler, Linker, and Debug Files ---
+*.o
+*.obj
+*.a
+*.lib
+*.la
+*.lo
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.pdb
+*.ilk
+*.idb
+*.exp
+
+# --- Visual Studio (MSVC) Artifacts ---
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.ncb
+*.sdf
+*.opensdf
+*.db
+*.ipch
+*.tlog
+*.recipe
+
+# --- IDEs (VS Code, CLion, etc.) ---
+.vscode/
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# --- Runtime / Application Output ---
+# Written by the app at exit; per-machine state, not project configuration.
+imgui.ini
+netprobe-layout.ini
+netprobe-settings.ini
+
+# --- GeoIP Data and Local Secrets ---
+# GeoLite databases are user-supplied/downloaded and must not be committed.
+/data/*.mmdb
+/data/*.mmdb.gz
+/data/*.tar.gz
+
+# Sample PCAP is generated at build time by NetProbeMakeSamplePcap.
+/data/sample.pcap
+.env
+.env.*
+!.env.example
+
+# --- User-Captured Traffic ---
+# Keep intentionally versioned PCAP fixtures under tests/ instead.
+/captures/
+/exports/
+
+# --- External & Dependency Cache ---
+/external/*
+!/external/README.md
+/vcpkg_installed/
+.conan/
+
+# --- System / OS Specific ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- Agent Workspace Cache ---
+/.agents/
+
+# --- Local Planning Documents ---
+# Implementation plans consumed by AI agents; not part of the shipped repo.
+/plans/
+
+# --- Demo Recording ---
+/docs/record-demo.md
+
+# --- libFuzzer Artifacts ---
+# Crash / leak / timeout inputs and stats files written by libFuzzer at runtime.
+crash-*
+leak-*
+oom-*
+timeout-*
+slow-unit-*
+fuzz-*.log
+
