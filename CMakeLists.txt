@@ -96,6 +96,10 @@ message(STATUS "Fetching Mbed TLS...")
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+# Keep Mbed TLS's ~114 SDK headers out of `cmake --install`. Its static-lib
+# install(TARGETS) rules have no off switch at all; those are kept out of the
+# release ZIP by the component-scoped CPack setup in section 7 below.
+set(INSTALL_MBEDTLS_HEADERS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     mbedtls
     GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
@@ -279,17 +283,43 @@ target_compile_definitions(NetProbeCli PRIVATE
 )
 set_target_properties(NetProbeCli PROPERTIES OUTPUT_NAME "netprobe-cli")
 
+# Everything NetProbe ships lives in the "runtime" component, and CPack is told
+# to package only that component. FetchContent dependencies contribute install
+# rules that cannot all be disabled (Mbed TLS installs its static libs
+# unconditionally); they land in other components and never reach the ZIP.
+# COMPONENT binds to the preceding artifact-kind block, so it must be
+# repeated for RUNTIME and BUNDLE separately.
 install(TARGETS NetProbe NetProbeCli
-    RUNTIME DESTINATION .
-    BUNDLE DESTINATION .
+    RUNTIME DESTINATION . COMPONENT runtime
+    BUNDLE DESTINATION . COMPONENT runtime
 )
-install(DIRECTORY data/ DESTINATION data)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE" DESTINATION .)
+# The PATTERN excludes keep developer-local GeoLite2 downloads (gitignored, but
+# present in data/ on machines that use the GeoIP feature) out of the ZIP.
+install(DIRECTORY data/ DESTINATION data
+    COMPONENT runtime
+    PATTERN "*.mmdb" EXCLUDE
+    PATTERN "*.tar.gz" EXCLUDE
+)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_LICENSES.md"
+    DESTINATION .
+    COMPONENT runtime
+)
+# packaging/README.md is the binary-user quick start; it lands at the ZIP root
+# as README.md (install(FILES) keeps the basename).
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/README.md"
+    DESTINATION .
+    COMPONENT runtime
+)
 
 set(CPACK_GENERATOR "ZIP")
 set(CPACK_PACKAGE_FILE_NAME "NetProbe-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+set(CPACK_COMPONENTS_ALL runtime)
 include(CPack)
 
 # --- 7.5 Sample PCAP generator ---
