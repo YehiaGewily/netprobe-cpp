@@ -111,8 +111,17 @@ jobs:
         if: matrix.build_testing == 'ON'
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # macOS builds a DMG for release AND a ZIP for the smoke test (byte-
+      # inspectable without mounting). Windows and Linux stay on ZIP only.
       - name: Package
-        run: cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            cpack --config build/CPackConfig.cmake -C Release -G "ZIP;DragNDrop" -B package
+          else
+            cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
+          fi
 
       # Extract the ZIP into a clean directory and use it the way a user
       # would: check the layout, then run the CLI from inside it. Guards
@@ -138,6 +147,33 @@ jobs:
             echo "::error::local GeoIP files leaked into package"; exit 1
           fi
 
+          # macOS packages ship NetProbe.app (a real Finder-launchable bundle)
+          # alongside the loose CLI + docs. Verify the bundle exists and has
+          # its own copy of the data files so File → Open bundled sample
+          # works after the user drags the app to /Applications.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            for f in \
+              "NetProbe.app/Contents/MacOS/NetProbe" \
+              "NetProbe.app/Contents/Info.plist" \
+              "NetProbe.app/Contents/Resources/data/sample.pcap" \
+              "NetProbe.app/Contents/Resources/README.md"; do
+              [ -e "$f" ] || { echo "::error::$f missing from .app bundle"; exit 1; }
+            done
+
+            # Info.plist must parse and both binaries must be universal.
+            # Catches truncated plists (rare) and non-universal builds (common
+            # regression when the arch cache var isn't threaded through).
+            plutil -lint NetProbe.app/Contents/Info.plist
+            for bin in NetProbe.app/Contents/MacOS/NetProbe netprobe-cli; do
+              archs=$(lipo -archs "$bin")
+              echo "  $bin: $archs"
+              case "$archs" in
+                *x86_64*arm64*|*arm64*x86_64*) : ;;
+                *) echo "::error::$bin is not universal (got: $archs)"; exit 1 ;;
+              esac
+            done
+          fi
+
           # The runner has no Npcap in System32, so stage the DLLs the test
           # step already fetched; a user machine gets them from the driver
           # install instead.
@@ -152,11 +188,46 @@ jobs:
           [ -s flows.json ] || { echo "::error::flow export from extracted package is empty"; exit 1; }
           grep -q '"flows"' flows.json
 
+      # The DMG is what macOS users actually download, so exercise it the
+      # same way: mount, run the CLI from the mounted image, detach. Runs
+      # only on macOS; other legs have no DMG to mount.
+      #
+      # Explicit -mountpoint avoids the "NetProbe 1.2.1" volume name,
+      # which contains a space that trips whitespace-delimited parsing of
+      # `hdiutil attach` output.
+      - name: Smoke-test mounted DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=(package/*.dmg)
+          mountpoint="$RUNNER_TEMP/netprobe-dmg-mount"
+          mkdir -p "$mountpoint"
+          echo "Mounting ${dmg[0]} at $mountpoint"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "${dmg[0]}"
+          trap 'hdiutil detach "$mountpoint" -quiet || true' EXIT
+
+          ls -la "$mountpoint"
+          [ -x "$mountpoint/netprobe-cli" ] || { echo "::error::netprobe-cli missing/non-exec in DMG"; exit 1; }
+          [ -d "$mountpoint/NetProbe.app" ] || { echo "::error::NetProbe.app missing in DMG"; exit 1; }
+          plutil -lint "$mountpoint/NetProbe.app/Contents/Info.plist"
+
+          # Run the CLI straight off the mounted read-only image; this
+          # catches library-load and code-signing-adjacent breakage that
+          # only shows up outside the build tree.
+          "$mountpoint/netprobe-cli" --version
+          "$mountpoint/netprobe-cli" -r "$mountpoint/data/sample.pcap" -o "$RUNNER_TEMP/dmg-flows.json"
+          grep -q '"flows"' "$RUNNER_TEMP/dmg-flows.json"
+
+      # Users on macOS receive the .dmg; everywhere else, the .zip.
+      # release-assets/*.{zip,dmg} is the pattern the release job hashes.
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: netprobe-${{ matrix.artifact }}
-          path: package/*.zip
+          path: |
+            package/*.zip
+            package/*.dmg
           if-no-files-found: error
 
   sanitizers:
@@ -290,9 +361,12 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    # Sanitizers gate the release: a tag must not publish binaries while
-    # ASan/UBSan is red. clang-tidy and fuzz stay advisory.
-    needs: [build, sanitizers]
+    # Correctness/security jobs gate the release. `fuzz` here means the
+    # 60-second timed run must NOT have found a crash — libFuzzer exits
+    # non-zero only on a crash, so a green fuzz job is a "no crash this
+    # run" signal, not a proof of absence. clang-tidy stays advisory:
+    # style findings should not block a security-fix hotfix.
+    needs: [build, sanitizers, fuzz]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -316,16 +390,22 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
+        # Hash every publishable artifact (ZIPs everywhere, plus the macOS
+        # DMG). Piped find keeps output stable when a new extension is added.
         run: |
           cd release-assets
-          sha256sum *.zip > SHA256SUMS.txt
+          find . -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' \) -type f \
+            -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+        # Explicit glob per extension so a missing DMG (e.g. macOS leg
+        # skipped) fails loudly instead of publishing a partial release.
         run: >
           gh release create "${GITHUB_REF_NAME}"
           release-assets/*.zip
+          release-assets/*.dmg
           release-assets/SHA256SUMS.txt
           --generate-notes
