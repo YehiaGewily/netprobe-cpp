@@ -6,6 +6,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- macOS releases now ship a real `NetProbe.app` bundle inside a `.dmg`,
+  with an icon, proper `Info.plist`, and a **universal binary** covering
+  both Intel and Apple Silicon in one download. Minimum macOS is 10.15.
+- Immutable resources (`data/sample.pcap`) now resolve against the
+  executable rather than the current working directory, so the GUI's
+  "Open bundled sample" works when launched from Finder, Explorer, or
+  any directory other than the install location.
+- **Per-user data directory** for user-provided files (GeoLite2 `.mmdb`
+  databases): `%LOCALAPPDATA%\NetProbe` on Windows,
+  `~/Library/Application Support/NetProbe` on macOS,
+  `$XDG_DATA_HOME/netprobe` on Linux. Overridable via `NETPROBE_DATA_DIR`.
+- `SIGNING.md` (draft — releases are still unsigned) and `PRIVACY.md`
+  documenting how signed builds will work and what data the project
+  collects (nothing).
+
+### Changed
+- **BREAKING (GeoIP only):** GeoLite2 `.mmdb` files must now live in the
+  per-user data directory above, not next to the executable. This
+  prevents writing inside a signed `NetProbe.app` bundle (which would
+  invalidate its signature) and matches OS conventions for
+  user-provided data. See `data/README.md`.
+- Landing-page fonts are now self-hosted (`docs/assets/fonts/`); the
+  page no longer contacts `fonts.googleapis.com` / `fonts.gstatic.com`.
+- CI now builds both a ZIP and a DMG on macOS, mounts the DMG with
+  `hdiutil` to smoke-test it in situ, verifies both binaries are
+  universal via `lipo`, and lints the plist with `plutil`. Release
+  checksums cover both ZIP and DMG.
+
+### Fixed
+- Removed a build-time absolute path (`NETPROBE_GEOIP_DATA_DIR`) baked
+  into the binary that only ever worked on the developer's own machine.
+
+### Documentation
+- Draft `SIGNING.md` includes a prominent status banner and future
+  tense throughout so it cannot be mistaken for describing shipped
+  signing. Removed `CFBundleDocumentTypes` claim from the macOS
+  `Info.plist` (the app has no file-open handler yet).
+
 ## [1.2.1] — 2026-08-05
 
 ### Added
