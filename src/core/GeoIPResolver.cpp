@@ -1,5 +1,7 @@
 #include "core/GeoIPResolver.hpp"
 
+#include "core/ResourcePaths.hpp"
+
 #include <filesystem>
 #include <format>
 #include <maxminddb.h>
@@ -15,11 +17,14 @@ namespace core {
 
     namespace {
         std::filesystem::path geoIpDataDirectory() {
-#ifdef NETPROBE_GEOIP_DATA_DIR
-            return NETPROBE_GEOIP_DATA_DIR;
-#else
-            return std::filesystem::current_path() / "data";
-#endif
+            // GeoLite2 databases are user-provided (MaxMind account required),
+            // not shipped with the app. They live in the per-user data
+            // directory rather than alongside the executable — writing files
+            // inside a signed macOS .app invalidates its signature, and users
+            // reasonably expect their data outside install locations.
+            //
+            // Override via NETPROBE_DATA_DIR (see core::userDataDir).
+            return userDataDir();
         }
 
         std::string getUtf8Value(const MMDB_lookup_result_s& result, const char* firstPath, const char* secondPath) {
@@ -56,7 +61,12 @@ namespace core {
             if (countryOpen || asnOpen) {
                 status = "GeoLite2 enrichment enabled.";
             } else {
-                status = "GeoLite2 databases were not found at " + countryPath.string() + " and " + asnPath.string();
+                // Point users at ONE canonical location — the parent of
+                // whichever path we tried — instead of dumping two long
+                // strings. `countryPath` and `asnPath` share a directory.
+                status = "GeoLite2 databases not found. Place GeoLite2-Country.mmdb and "
+                    "GeoLite2-ASN.mmdb in " + countryPath.parent_path().string()
+                    + " (override with the NETPROBE_DATA_DIR environment variable).";
             }
         }
 

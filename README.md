@@ -8,9 +8,14 @@ A real-time and offline network traffic analyzer built with **Modern C++20**, **
 
 ## Download
 
-Download the ZIP for your platform from [GitHub Releases](https://github.com/YehiaGewily/netprobe-cpp/releases). Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux and macOS releases require their system libpcap runtime.
+Download from [GitHub Releases](https://github.com/YehiaGewily/netprobe-cpp/releases):
 
-Each release includes a `SHA256SUMS.txt` — verify your download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (or `Get-FileHash` on Windows). See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+- **Windows / Linux** — `NetProbe-<version>-Windows.zip` / `-Linux.zip`.
+- **macOS** — `NetProbe-<version>-Darwin.dmg`. Mount it, drag `NetProbe.app` into `Applications`.
+
+Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux releases require the system libpcap runtime. macOS ships libpcap with the OS.
+
+Each release includes a `SHA256SUMS.txt` — verify your download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (or `Get-FileHash` on Windows). See [CHANGELOG.md](CHANGELOG.md) for what's new in each version, and [SIGNING.md](SIGNING.md) for the code-signing policy (currently unsigned; SignPath application in progress).
 
 ## Features
 
@@ -109,7 +114,7 @@ cpack --config build/CPackConfig.cmake -C Release -G ZIP -B package
 5. Use **Flows** for per-connection activity, or enter a BPF filter such as `tcp port 443` in the menu bar.
 6. **Click a packet row** in *Live Packets* to populate the *Packet Detail* pane with the layered decode and hex dump.
 
-For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in `data/`. See [data/README.md](data/README.md).
+For GeoIP and ASN columns, place `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in NetProbe's per-user data directory (`%LOCALAPPDATA%\NetProbe\` on Windows, `~/Library/Application Support/NetProbe/` on macOS, `$XDG_DATA_HOME/netprobe/` or `~/.local/share/netprobe/` on Linux). NetProbe surfaces the exact path in its GeoIP status message on startup, and `NETPROBE_DATA_DIR` overrides the default. See [data/README.md](data/README.md).
 
 ## Headless CLI
 

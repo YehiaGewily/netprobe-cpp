@@ -1,0 +1,18 @@
+# Normalize text files to LF in git-native storage. Working-tree files
+# may still be CRLF on Windows checkouts if the developer's core.autocrlf
+# is set that way; what matters is the bytes git stores and the diffs
+# review tools see. Prevents future "trailing whitespace" false positives
+# from `git diff --check` on CRLF lines.
+* text=auto eol=lf
+
+# Binary files must not go through text conversion.
+*.png    binary
+*.ico    binary
+*.icns   binary
+*.woff2  binary
+*.pcap   binary
+*.pcapng binary
+*.mmdb   binary
+*.tar.gz binary
+*.zip    binary
+*.dmg    binary
