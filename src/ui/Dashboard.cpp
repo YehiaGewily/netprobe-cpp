@@ -1,5 +1,6 @@
 #include "ui/GuiLayer.hpp"
 #include "ui/GuiTheme.hpp"
+#include "core/ResourcePaths.hpp"
 #include "imgui.h"
 #include "implot.h"
 #include <GLFW/glfw3.h>
@@ -100,8 +101,11 @@ namespace ui {
         textCentered("You can also drop a .pcap / .pcapng file anywhere in this window.", kText3);
         ImGui::Dummy(ImVec2(0, 14));
 
-        // Centered action buttons.
-        const bool sampleAvailable = std::filesystem::exists("data/sample.pcap");
+        // Centered action buttons. The sample path resolves against the
+        // running executable, not the CWD, so the button works when the app
+        // is launched by double-click or from a macOS .app bundle.
+        const auto samplePath = core::resource("data/sample.pcap");
+        const bool sampleAvailable = std::filesystem::exists(samplePath);
         const float openW = 130.0f;
         const float sampleW = sampleAvailable ? 180.0f : 0.0f;
         const float totalW = openW + (sampleAvailable ? sampleW + 10.0f : 0.0f);
@@ -114,7 +118,7 @@ namespace ui {
         if (sampleAvailable) {
             ImGui::SameLine(0.0f, 10.0f);
             if (ImGui::Button("Open bundled sample", ImVec2(sampleW, 0))) {
-                openPcapFile("data/sample.pcap");
+                openPcapFile(samplePath.string());
             }
         }
     }
