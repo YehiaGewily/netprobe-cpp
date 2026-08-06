@@ -1,4 +1,27 @@
 cmake_minimum_required(VERSION 3.20)
+
+# macOS build knobs must be set BEFORE project(), so they influence the
+# initial compiler probes CMake runs for language enablement. A user
+# override on the cmake command line still wins because we only set the
+# cache defaults.
+if(APPLE)
+    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+        # 10.15 (Catalina) is out of Apple security-update coverage as of
+        # 2026 but still runs on hardware NetProbe users may reasonably
+        # have; targeting it costs nothing and matches the value the
+        # Info.plist advertises as LSMinimumSystemVersion. Raise as older
+        # hardware falls out of the user base.
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING
+            "Minimum macOS version NetProbe binaries target")
+    endif()
+    if(NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+        # Universal binary: one artifact serves Intel and Apple Silicon.
+        # Users on either arch download the same DMG.
+        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING
+            "Architectures NetProbe binaries include (Intel + Apple Silicon)")
+    endif()
+endif()
+
 project(NetProbe VERSION 1.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -34,7 +57,9 @@ if(WIN32)
     # Split by consumer: CORE libraries back the capture/analysis library (and
     # therefore also the tests and the headless CLI), while GUI libraries are
     # needed only by the windowed executable.
-    set(NETPROBE_CORE_PLATFORM_LIBRARIES ws2_32 iphlpapi)
+    # shell32/ole32 supply SHGetKnownFolderPath + CoTaskMemFree, used by
+    # core::userDataDir() to locate %LOCALAPPDATA%.
+    set(NETPROBE_CORE_PLATFORM_LIBRARIES ws2_32 iphlpapi shell32 ole32)
     set(NETPROBE_GUI_PLATFORM_LIBRARIES dwmapi opengl32)
 else()
     find_path(PCAP_INCLUDE_DIR NAMES pcap.h pcap/pcap.h REQUIRED)
@@ -152,6 +177,7 @@ set(NETPROBE_CORE_SOURCES
     src/core/ProtocolParser.cpp
     src/core/QuicParser.cpp
     src/core/QuicTracker.cpp
+    src/core/ResourcePaths.cpp
     src/core/TlsReassembler.cpp
 
     src/capture/CaptureEngine.hpp
@@ -173,6 +199,7 @@ set(NETPROBE_CORE_SOURCES
     src/core/ProtocolParser.hpp
     src/core/QuicParser.hpp
     src/core/QuicTracker.hpp
+    src/core/ResourcePaths.hpp
     src/core/TlsReassembler.hpp
 )
 
@@ -232,9 +259,11 @@ target_link_libraries(NetProbeCore PUBLIC
 )
 
 # PRIVATE: these configure how core's own sources compile; consumers neither
-# need nor should inherit them.
+# need nor should inherit them. GeoIP data path is resolved at runtime through
+# core::ResourcePaths, which looks alongside the executable (release layout)
+# and in a few dev-build locations — the old build-time absolute path only
+# worked on the developer's own machine.
 target_compile_definitions(NetProbeCore PRIVATE
-    NETPROBE_GEOIP_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
     NETPROBE_VERSION="${PROJECT_VERSION}"
 )
 
@@ -252,6 +281,61 @@ add_executable(NetProbe
 if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/resources/netprobe.ico")
     target_sources(NetProbe PRIVATE resources/netprobe.rc)
     message(STATUS "Embedding resources/netprobe.ico into NetProbe.exe")
+endif()
+
+# --- macOS .app bundle ---------------------------------------------------
+# On macOS the GUI target ships as NetProbe.app, so Finder shows a real app
+# with an icon and Info.plist rather than a bare Unix binary. The bundle
+# also carries a copy of data/ so File → Open bundled sample keeps working
+# when the app is launched from Finder (cwd = /).
+if(APPLE)
+    # Generate NetProbe.icns from the source PNG using sips + iconutil,
+    # both of which ship with macOS. Skip cleanly if the source is missing
+    # so the build still succeeds — the app just gets Apple's default icon.
+    set(_netprobe_icon_png "${CMAKE_SOURCE_DIR}/resources/netprobe-icon.png")
+    set(_netprobe_icon_name "")
+    if(EXISTS "${_netprobe_icon_png}")
+        set(_netprobe_iconset "${CMAKE_CURRENT_BINARY_DIR}/NetProbe.iconset")
+        set(_netprobe_icns    "${CMAKE_CURRENT_BINARY_DIR}/NetProbe.icns")
+        add_custom_command(
+            OUTPUT  "${_netprobe_icns}"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${_netprobe_iconset}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_netprobe_iconset}"
+            COMMAND sips -z 16   16   "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_16x16.png"
+            COMMAND sips -z 32   32   "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_16x16@2x.png"
+            COMMAND sips -z 32   32   "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_32x32.png"
+            COMMAND sips -z 64   64   "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_32x32@2x.png"
+            COMMAND sips -z 128  128  "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_128x128.png"
+            COMMAND sips -z 256  256  "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_128x128@2x.png"
+            COMMAND sips -z 256  256  "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_256x256.png"
+            COMMAND sips -z 512  512  "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_256x256@2x.png"
+            COMMAND sips -z 512  512  "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_512x512.png"
+            COMMAND sips -z 1024 1024 "${_netprobe_icon_png}" --out "${_netprobe_iconset}/icon_512x512@2x.png"
+            COMMAND iconutil -c icns -o "${_netprobe_icns}" "${_netprobe_iconset}"
+            DEPENDS "${_netprobe_icon_png}"
+            COMMENT "Generating NetProbe.icns"
+            VERBATIM
+        )
+        # Attach the .icns as a bundle resource so CMake copies it into
+        # NetProbe.app/Contents/Resources/ during the build.
+        target_sources(NetProbe PRIVATE "${_netprobe_icns}")
+        set_source_files_properties("${_netprobe_icns}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION Resources
+            GENERATED TRUE
+        )
+        set(_netprobe_icon_name "NetProbe.icns")
+    endif()
+
+    set_target_properties(NetProbe PROPERTIES
+        MACOSX_BUNDLE                       TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME           "NetProbe"
+        MACOSX_BUNDLE_GUI_IDENTIFIER        "io.github.yehiagewily.netprobe"
+        MACOSX_BUNDLE_BUNDLE_VERSION        "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING  "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE             "${_netprobe_icon_name}"
+        MACOSX_BUNDLE_COPYRIGHT             "NetProbe is MIT-licensed. See THIRD_PARTY_LICENSES.md."
+        MACOSX_BUNDLE_INFO_PLIST            "${CMAKE_SOURCE_DIR}/resources/Info.plist.in"
+    )
 endif()
 
 # --- 5. Include Directories ---
@@ -286,15 +370,35 @@ set_target_properties(NetProbeCli PROPERTIES OUTPUT_NAME "netprobe-cli")
 # Everything NetProbe ships lives in the "runtime" component, and CPack is told
 # to package only that component. FetchContent dependencies contribute install
 # rules that cannot all be disabled (Mbed TLS installs its static libs
-# unconditionally); they land in other components and never reach the ZIP.
+# unconditionally); they land in other components and never reach the ZIP/DMG.
 # COMPONENT binds to the preceding artifact-kind block, so it must be
 # repeated for RUNTIME and BUNDLE separately.
 install(TARGETS NetProbe NetProbeCli
     RUNTIME DESTINATION . COMPONENT runtime
     BUNDLE DESTINATION . COMPONENT runtime
 )
+if(APPLE)
+    # Bundle a copy of data/ into NetProbe.app so File → Open bundled sample
+    # keeps working after the user drags the app to /Applications. Also ship
+    # a copy of the docs INSIDE the bundle so the .app is a fully
+    # self-contained install once dragged over. The loose copies below
+    # remain for the CLI + docs at the DMG root.
+    install(DIRECTORY data/
+        DESTINATION "NetProbe.app/Contents/Resources/data"
+        COMPONENT runtime
+        PATTERN "*.mmdb" EXCLUDE
+        PATTERN "*.tar.gz" EXCLUDE
+    )
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_LICENSES.md"
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/README.md"
+        DESTINATION "NetProbe.app/Contents/Resources"
+        COMPONENT runtime
+    )
+endif()
 # The PATTERN excludes keep developer-local GeoLite2 downloads (gitignored, but
-# present in data/ on machines that use the GeoIP feature) out of the ZIP.
+# present in data/ on machines that use the GeoIP feature) out of the package.
 install(DIRECTORY data/ DESTINATION data
     COMPONENT runtime
     PATTERN "*.mmdb" EXCLUDE
@@ -313,7 +417,17 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/README.md"
     COMPONENT runtime
 )
 
-set(CPACK_GENERATOR "ZIP")
+# CPack generator: DMG on macOS (Finder-native install experience), ZIP
+# elsewhere. The Darwin ZIP path stays available via `cpack -G ZIP` when
+# needed (CI still uses it locally for the smoke test).
+if(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+    # DragNDrop expects a single top-level directory to mount. This name
+    # becomes the mounted-volume label the user sees in Finder.
+    set(CPACK_DMG_VOLUME_NAME "NetProbe ${PROJECT_VERSION}")
+else()
+    set(CPACK_GENERATOR "ZIP")
+endif()
 set(CPACK_PACKAGE_FILE_NAME "NetProbe-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
@@ -348,6 +462,7 @@ if(BUILD_TESTING)
         tests/flow_exporter_test.cpp
         tests/flow_loss_test.cpp
         tests/malformed_test.cpp
+        tests/resource_paths_test.cpp
     )
     # src/, pcap headers, and the crypto/geo libraries all arrive through
     # NetProbeCore's PUBLIC usage requirements.
