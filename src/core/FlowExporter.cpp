@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <format>
 #include <fstream>
@@ -14,6 +15,12 @@
 namespace core {
 
     namespace {
+
+        std::string formatFloat(double value, int precision) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.*f", precision, value);
+            return std::string(buf);
+        }
 
         std::string csvEscape(const std::string& value) {
             if (value.find_first_of(",\"\n") == std::string::npos) return value;
@@ -143,8 +150,8 @@ namespace core {
                 << flow.packets << ','
                 << flow.bytesUp << ','
                 << flow.bytesDown << ','
-                << std::format("{:.1f}", flow.rateBytesPerSecond) << ','
-                << std::format("{:.2f}", rttMillisecondsOf(flow)) << ','
+                << formatFloat(flow.rateBytesPerSecond, 1) << ','
+                << formatFloat(rttMillisecondsOf(flow), 2) << ','
                 << durationSecondsOf(flow) << ','
                 << flow.retransmissionsUp << ','
                 << flow.retransmissionsDown << ','
@@ -207,7 +214,7 @@ namespace core {
             document += ",\n      \"duration_sec\": ";
             document += std::format("{}", durationSecondsOf(flow));
             document += ",\n      \"rate_bytes_per_sec\": ";
-            document += std::format("{:.1f}", flow.rateBytesPerSecond);
+            document += formatFloat(flow.rateBytesPerSecond, 1);
             // Microseconds, as an integer: the JSON is for machines, and the
             // raw measurement avoids handing consumers a rounded float to
             // convert back. The CSV keeps milliseconds for spreadsheets.
