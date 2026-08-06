@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,17 +26,17 @@ namespace ui {
             std::string sub;
         };
 
-        const std::string throughput = std::format("{:.2f}", m_currentMbps);
+        const std::string throughput = formatFloat(m_currentMbps, 2);
         const std::string flows = formatCount(m_activeFlowCount);
         const std::string packets = formatCount(m_totalPackets);
         const std::string topApp = m_topService.empty() ? std::string{"--"} : m_topService;
         const std::string topAppSub = m_topService.empty()
             ? std::string{"awaiting traffic"}
-            : std::format("{} packets", m_topServiceCount);
+            : (std::to_string(m_topServiceCount) + " packets");
 
         const std::array<Tile, 4> tiles = {{
             {"PACKETS",      packets,    "captured this session"},
-            {"THROUGHPUT",   throughput + " MB/s", std::format("peak {:.2f} MB/s", m_peakMbps)},
+            {"THROUGHPUT",   throughput + " MB/s", "peak " + formatFloat(m_peakMbps, 2) + " MB/s"},
             {"FLOWS",        flows,      "active conversations"},
             {"TOP SERVICE",  topApp,     topAppSub},
         }};
@@ -91,7 +90,7 @@ namespace ui {
         if (m_captureActive) {
             textCentered(m_devices.empty()
                 ? "Capture is running."
-                : std::format("Listening on {}.", m_devices[m_selectedDeviceIndex].description),
+                : ("Listening on " + m_devices[m_selectedDeviceIndex].description + "."),
                 kText2);
             textCentered("If nothing appears, live capture may need elevated privileges.", kText3);
         } else {
@@ -149,7 +148,7 @@ namespace ui {
             ImGui::SameLine();
             ImGui::TextColored(kText3, " — last 60 seconds");
 
-            const std::string currentLabel = std::format("{:.2f} MB/s", m_currentMbps);
+            const std::string currentLabel = formatFloat(m_currentMbps, 2) + " MB/s";
             const float labelWidth = ImGui::CalcTextSize(currentLabel.c_str()).x;
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - labelWidth + ImGui::GetCursorPosX() - ImGui::GetStyle().ItemSpacing.x);
             ImGui::TextColored(kText1, "%s", currentLabel.c_str());

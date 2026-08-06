@@ -4,8 +4,8 @@
 
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
-#include <format>
 #include <string>
 
 // Shared visual tokens and small drawing helpers used by every UI view.
@@ -85,6 +85,12 @@ namespace ui {
             std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
+    inline std::string formatFloat(double value, int precision) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.*f", precision, value);
+        return std::string(buf);
+    }
+
     inline std::string formatBytes(uint64_t bytes) {
         constexpr std::array<const char*, 4> units = {"B", "KB", "MB", "GB"};
         double value = static_cast<double>(bytes);
@@ -94,20 +100,25 @@ namespace ui {
             ++unit;
         }
         return unit == 0
-            ? std::format("{} {}", bytes, units[unit])
-            : std::format("{:.1f} {}", value, units[unit]);
+            ? (std::to_string(bytes) + " " + units[unit])
+            : (formatFloat(value, 1) + " " + units[unit]);
     }
 
     inline std::string formatCount(uint64_t value) {
-        if (value < 1000) return std::format("{}", value);
-        if (value < 1'000'000) return std::format("{:.1f}K", value / 1000.0);
-        if (value < 1'000'000'000) return std::format("{:.1f}M", value / 1'000'000.0);
-        return std::format("{:.1f}B", value / 1'000'000'000.0);
+        if (value < 1000) return std::to_string(value);
+        if (value < 1'000'000) return formatFloat(value / 1000.0, 1) + "K";
+        if (value < 1'000'000'000) return formatFloat(value / 1'000'000.0, 1) + "M";
+        return formatFloat(value / 1'000'000'000.0, 1) + "B";
     }
 
     inline std::string formatDuration(int64_t firstSeen, int64_t lastSeen) {
         const int64_t seconds = std::max<int64_t>(0, (lastSeen - firstSeen) / 1'000'000);
-        return std::format("{:02}:{:02}:{:02}", seconds / 3600, (seconds / 60) % 60, seconds % 60);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%02lld:%02lld:%02lld",
+            static_cast<long long>(seconds / 3600),
+            static_cast<long long>((seconds / 60) % 60),
+            static_cast<long long>(seconds % 60));
+        return std::string(buf);
     }
 
     inline ImVec4 protocolColor(const std::string& protocol) {

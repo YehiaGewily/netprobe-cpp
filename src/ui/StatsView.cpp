@@ -4,7 +4,6 @@
 #include "imgui.h"
 
 #include <algorithm>
-#include <format>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -122,8 +121,8 @@ namespace ui {
                     const uint64_t bytes = m_protocolBytes.contains(name)
                         ? m_protocolBytes.at(name) : 0;
                     shareRow(name, protocolColor(name),
-                        std::format("{}  {}", formatCount(count), formatBytes(bytes)),
-                        fraction, std::format("{:.1f}%", share * 100.0f));
+                        formatCount(count) + "  " + formatBytes(bytes),
+                        fraction, formatFloat(share * 100.0f, 1) + "%");
                 }
             }
         }
@@ -183,8 +182,8 @@ namespace ui {
                         ? talker.host.substr(0, 20) + "…"
                         : talker.host;
                     shareRow(label, serviceColor(talker.host),
-                        std::format("{}  ({} flows)", formatBytes(talker.bytes), talker.flows),
-                        fraction, std::format("{:.1f}%", share * 100.0f));
+                        formatBytes(talker.bytes) + "  (" + std::to_string(talker.flows) + " flows)",
+                        fraction, formatFloat(share * 100.0f, 1) + "%");
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
                         ImGui::SetTooltip("%s\n%s in %d flow(s), %s packets",
                             talker.host.c_str(), formatBytes(talker.bytes).c_str(),

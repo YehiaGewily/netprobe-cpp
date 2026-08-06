@@ -6,8 +6,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <format>
+#include <ctime>
 #include <string>
+#include <vector>
 
 namespace ui {
 
@@ -49,7 +50,18 @@ namespace ui {
             };
             const auto sec = std::chrono::floor<std::chrono::seconds>(tp);
             const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(tp - sec).count();
-            return std::format("{:%Y-%m-%d %H:%M:%S}.{:03}", sec, millis);
+            const auto time_t_sec = std::chrono::system_clock::to_time_t(sec);
+            std::tm tm_buf{};
+#if defined(_WIN32)
+            localtime_s(&tm_buf, &time_t_sec);
+#else
+            localtime_r(&time_t_sec, &tm_buf);
+#endif
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03lld",
+                tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
+                tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec, static_cast<long long>(millis));
+            return std::string(buf);
         }
 
         void renderHexDump(const std::vector<uint8_t>& bytes, ImFont* mono) {
@@ -126,17 +138,16 @@ namespace ui {
             if (p.tcpSyn) flags += "SYN ";
             if (p.tcpAck) flags += "ACK ";
             if (!flags.empty()) flags.pop_back();
-            const std::string summary = std::format(
-                "Timestamp: {}\nSource: {}:{}\nDest: {}:{}\nProtocol: {}{}\n"
-                "Wire length: {} bytes\nTunnel: {}\nService: {}\nSNI: {}\nInfo: {}\n",
-                formatTimestamp(p.timestamp),
-                p.srcIP, p.srcPort, p.dstIP, p.dstPort,
-                p.protocol, flags.empty() ? "" : " [" + flags + "]",
-                record.raw.length,
-                p.tunnel.empty() ? "--" : p.tunnel,
-                p.service.empty() ? "--" : p.service,
-                p.sni.empty() ? "--" : p.sni,
-                p.info.empty() ? "--" : p.info);
+            const std::string summary =
+                "Timestamp: " + formatTimestamp(p.timestamp) + "\n" +
+                "Source: " + p.srcIP + ":" + std::to_string(p.srcPort) + "\n" +
+                "Dest: " + p.dstIP + ":" + std::to_string(p.dstPort) + "\n" +
+                "Protocol: " + p.protocol + (flags.empty() ? "" : " [" + flags + "]") + "\n" +
+                "Wire length: " + std::to_string(record.raw.length) + " bytes\n" +
+                "Tunnel: " + (p.tunnel.empty() ? "--" : p.tunnel) + "\n" +
+                "Service: " + (p.service.empty() ? "--" : p.service) + "\n" +
+                "SNI: " + (p.sni.empty() ? "--" : p.sni) + "\n" +
+                "Info: " + (p.info.empty() ? "--" : p.info) + "\n";
             ImGui::SetClipboardText(summary.c_str());
         }
         ImGui::SetItemTooltip("Copy the decoded fields to the clipboard");
@@ -160,8 +171,8 @@ namespace ui {
             groupHeader("Frame");
             kv("Timestamp", formatTimestamp(p.timestamp));
             kv("Link type", linkTypeName(record.raw.linkType));
-            kv("Wire length", std::format("{} bytes", record.raw.length));
-            kv("Captured", std::format("{} bytes", record.raw.capturedLength));
+            kv("Wire length", std::to_string(record.raw.length) + " bytes");
+            kv("Captured", std::to_string(record.raw.capturedLength) + " bytes");
 
             // Only present when the packet was encapsulated; the addresses above
             // the tunnel are the carrier, not the real conversation.
@@ -179,8 +190,8 @@ namespace ui {
 
             if (p.srcPort != 0 || p.dstPort != 0) {
                 groupHeader("Transport");
-                kv("Source port", std::format("{}", p.srcPort));
-                kv("Dest port", std::format("{}", p.dstPort));
+                kv("Source port", std::to_string(p.srcPort));
+                kv("Dest port", std::to_string(p.dstPort));
                 if (p.protocol == "TCP") {
                     std::string flags;
                     if (p.tcpSyn) flags += "SYN ";
@@ -189,11 +200,11 @@ namespace ui {
                     if (p.tcpRst) flags += "RST ";
                     if (!flags.empty()) flags.pop_back();
                     kv("TCP flags", flags);
-                    kv("Sequence", std::format("{}", p.tcpSeq));
+                    kv("Sequence", std::to_string(p.tcpSeq));
                 }
                 kv("Payload", p.payloadLength == 0
                     ? std::string{}
-                    : std::format("{} bytes", p.payloadLength));
+                    : (std::to_string(p.payloadLength) + " bytes"));
             }
 
             groupHeader("Application");

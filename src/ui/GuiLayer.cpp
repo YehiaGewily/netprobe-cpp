@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -878,7 +877,7 @@ namespace ui {
 
         // Right-aligned overrun badge so users see when the UI is dropping.
         if (const size_t dropped = m_queue.droppedPackets(); dropped > 0) {
-            const std::string badge = std::format("{} dropped", formatCount(dropped));
+            const std::string badge = formatCount(dropped) + " dropped";
             const float w = ImGui::CalcTextSize(badge.c_str()).x;
             ImGui::SameLine(ImGui::GetContentRegionMax().x - w - 18.0f);
             ImGui::TextColored(kWarning, "%s", badge.c_str());

@@ -8,7 +8,6 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
-#include <format>
 #include <fstream>
 #include <string>
 #include <tuple>
@@ -178,21 +177,20 @@ namespace ui {
             ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed, 78.0f);
             ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
 
-            detailRow("Endpoints", std::format("{}:{}  ->  {}:{}",
-                flow.key.srcIP, flow.key.srcPort, flow.key.dstIP, flow.key.dstPort));
+            detailRow("Endpoints", (flow.key.srcIP + ":" + std::to_string(flow.key.srcPort) +
+                "  ->  " + flow.key.dstIP + ":" + std::to_string(flow.key.dstPort)).c_str());
             detailRow("Protocol", flow.key.protocol);
             detailRow("Process", flow.process);
             detailRow("Country", geo.country.empty() ? "-" : geo.country);
             detailRow("Org", organizationLabel(geo));
             // Name the direction by its endpoint rather than "up"/"down": for a
             // peer-to-peer flow neither side is the client.
-            detailRow(std::format("{} sent", flow.key.srcIP).c_str(), formatBytes(flow.bytesUp));
-            detailRow(std::format("{} sent", flow.key.dstIP).c_str(), formatBytes(flow.bytesDown));
-            detailRow("Packets", std::format("{}", flow.packets));
-            detailRow("Rate", std::format("{}/s", formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond))));
+            detailRow((flow.key.srcIP + " sent").c_str(), formatBytes(flow.bytesUp));
+            detailRow((flow.key.dstIP + " sent").c_str(), formatBytes(flow.bytesDown));
+            detailRow("Packets", std::to_string(flow.packets));
+            detailRow("Rate", formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond)) + "/s");
             if (flow.initialRttMicroseconds > 0) {
-                detailRow("Init RTT", std::format("{:.1f} ms",
-                    static_cast<double>(flow.initialRttMicroseconds) / 1000.0));
+                detailRow("Init RTT", formatFloat(static_cast<double>(flow.initialRttMicroseconds) / 1000.0, 1) + " ms");
             } else {
                 detailRow("Init RTT", "");
             }
@@ -201,10 +199,10 @@ namespace ui {
                 // Per direction and absolute here: the table already shows the
                 // combined rate, and when diagnosing you need to know which
                 // side is losing packets.
-                detailRow("Retrans", std::format("{} / {}",
-                    flow.retransmissionsUp, flow.retransmissionsDown));
-                detailRow("Reordered", std::format("{} / {}",
-                    flow.outOfOrderUp, flow.outOfOrderDown));
+                detailRow("Retrans", std::to_string(flow.retransmissionsUp) + " / " +
+                    std::to_string(flow.retransmissionsDown));
+                detailRow("Reordered", std::to_string(flow.outOfOrderUp) + " / " +
+                    std::to_string(flow.outOfOrderDown));
             }
 
             ImGui::EndTable();
@@ -362,7 +360,7 @@ namespace ui {
                         ImGui::TextColored(kText1, "%s", flow.service.c_str());
                     }
                     ImGui::TableSetColumnIndex(4);
-                    const std::string protocolAndPort = std::format("{}:{}", flow.key.protocol, flow.key.dstPort);
+                    const std::string protocolAndPort = flow.key.protocol + ":" + std::to_string(flow.key.dstPort);
                     ImGui::TextColored(protocolColor(flow.key.protocol), "%s", protocolAndPort.c_str());
                     ImGui::TableSetColumnIndex(5);
                     ImGui::Text("%llu", static_cast<unsigned long long>(flow.packets));
@@ -391,7 +389,7 @@ namespace ui {
                         ImGui::TextUnformatted(bytes.c_str());
                     }
                     ImGui::TableSetColumnIndex(7);
-                    const std::string rate = std::format("{}/s", formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond)));
+                    const std::string rate = formatBytes(static_cast<uint64_t>(flow.rateBytesPerSecond)) + "/s";
                     ImGui::TextUnformatted(rate.c_str());
                     ImGui::TableSetColumnIndex(8);
                     if (flow.initialRttMicroseconds > 0) {

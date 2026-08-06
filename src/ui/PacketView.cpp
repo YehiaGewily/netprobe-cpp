@@ -5,7 +5,8 @@
 
 #include <cctype>
 #include <chrono>
-#include <format>
+#include <cstdio>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -18,12 +19,14 @@ namespace ui {
             if (needleLower.empty()) return true;
             if (haystack.size() < needleLower.size()) return false;
             for (size_t i = 0; i + needleLower.size() <= haystack.size(); ++i) {
-                size_t j = 0;
-                while (j < needleLower.size()
-                    && std::tolower(static_cast<unsigned char>(haystack[i + j])) == needleLower[j]) {
-                    ++j;
+                bool match = true;
+                for (size_t j = 0; j < needleLower.size(); ++j) {
+                    if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) != needleLower[j]) {
+                        match = false;
+                        break;
+                    }
                 }
-                if (j == needleLower.size()) return true;
+                if (match) return true;
             }
             return false;
         }
@@ -34,7 +37,17 @@ namespace ui {
             };
             const auto seconds = std::chrono::floor<std::chrono::seconds>(timestamp);
             const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp - seconds).count();
-            return std::format("{:%H:%M:%S}.{:03}", seconds, milliseconds);
+            const auto time_t_sec = std::chrono::system_clock::to_time_t(seconds);
+            std::tm tm_buf{};
+#if defined(_WIN32)
+            localtime_s(&tm_buf, &time_t_sec);
+#else
+            localtime_r(&time_t_sec, &tm_buf);
+#endif
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03lld",
+                tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec, static_cast<long long>(milliseconds));
+            return std::string(buf);
         }
 
     }
@@ -50,8 +63,8 @@ namespace ui {
         if (containsCI(packet.hostname, needle)) return true;
         if (containsCI(packet.info, needle)) return true;
         if (containsCI(packet.tunnel, needle)) return true;
-        if (packet.srcPort != 0 && containsCI(std::format("{}", packet.srcPort), needle)) return true;
-        if (packet.dstPort != 0 && containsCI(std::format("{}", packet.dstPort), needle)) return true;
+        if (packet.srcPort != 0 && containsCI(std::to_string(packet.srcPort), needle)) return true;
+        if (packet.dstPort != 0 && containsCI(std::to_string(packet.dstPort), needle)) return true;
         if (const auto hostname = m_session.lookupHostname(packet.dstIP);
             hostname && containsCI(*hostname, needle)) return true;
         return false;
@@ -111,10 +124,11 @@ namespace ui {
         if (anyFilter) {
             std::string signature{m_displayFilter};
             if (m_packetFlowFilter) {
-                signature += std::format("\x1f{}|{}|{}|{}|{}",
-                    m_packetFlowFilter->srcIP, m_packetFlowFilter->srcPort,
-                    m_packetFlowFilter->dstIP, m_packetFlowFilter->dstPort,
-                    m_packetFlowFilter->protocol);
+                signature += "\x1f" + m_packetFlowFilter->srcIP + "|" +
+                    std::to_string(m_packetFlowFilter->srcPort) + "|" +
+                    m_packetFlowFilter->dstIP + "|" +
+                    std::to_string(m_packetFlowFilter->dstPort) + "|" +
+                    m_packetFlowFilter->protocol;
             }
             if (m_filterCacheHistoryVersion != m_packetHistoryVersion
                 || m_filterCacheSignature != signature) {
@@ -192,10 +206,11 @@ namespace ui {
                     }
                     if (ImGui::BeginPopupContextItem("##packetContext")) {
                         if (ImGui::MenuItem("Copy row")) {
-                            const std::string row = std::format(
-                                "{}\t{}:{}\t{}:{}\t{}\t{}\t{}\t{}",
-                                timeText, p.srcIP, p.srcPort, p.dstIP, p.dstPort,
-                                p.protocol, p.length, p.service, p.sni);
+                            const std::string row = timeText + "\t" +
+                                p.srcIP + ":" + std::to_string(p.srcPort) + "\t" +
+                                p.dstIP + ":" + std::to_string(p.dstPort) + "\t" +
+                                p.protocol + "\t" + std::to_string(p.length) + "\t" +
+                                p.service + "\t" + p.sni;
                             ImGui::SetClipboardText(row.c_str());
                         }
                         if (ImGui::MenuItem("Copy source IP")) {
