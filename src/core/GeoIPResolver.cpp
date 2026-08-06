@@ -55,11 +55,11 @@ namespace core {
         bool asnOpen = false;
         std::string status;
 
-        Database(const std::filesystem::path& countryPath, const std::filesystem::path& asnPath) {
+        Database(const std::filesystem::path& countryPath, const std::filesystem::path& asnPath, const std::string& customStatusSuffix = "") {
             countryOpen = MMDB_open(countryPath.string().c_str(), MMDB_MODE_MMAP, &country) == MMDB_SUCCESS;
             asnOpen = MMDB_open(asnPath.string().c_str(), MMDB_MODE_MMAP, &asn) == MMDB_SUCCESS;
             if (countryOpen || asnOpen) {
-                status = "GeoLite2 enrichment enabled.";
+                status = "GeoLite2 enrichment enabled." + customStatusSuffix;
             } else {
                 // Point users at ONE canonical location — the parent of
                 // whichever path we tried — instead of dumping two long
@@ -77,8 +77,38 @@ namespace core {
     };
 
     GeoIPResolver::GeoIPResolver(size_t cacheCapacity)
-        : GeoIPResolver(geoIpDataDirectory() / "GeoLite2-Country.mmdb",
-            geoIpDataDirectory() / "GeoLite2-ASN.mmdb", cacheCapacity) {}
+        : m_cacheCapacity(cacheCapacity > 0 ? cacheCapacity : 1) {
+        const auto newDir = userDataDir();
+        const auto primaryCountry = newDir / "GeoLite2-Country.mmdb";
+        const auto primaryAsn = newDir / "GeoLite2-ASN.mmdb";
+
+        std::error_code ec;
+        const bool primaryExists = std::filesystem::exists(primaryCountry, ec) || std::filesystem::exists(primaryAsn, ec);
+
+        if (primaryExists) {
+            m_database = std::make_unique<Database>(primaryCountry, primaryAsn);
+            if (m_database->countryOpen || m_database->asnOpen) {
+                return;
+            }
+        }
+
+        // Legacy location fallback (data/ directory relative to resource path)
+        const auto legacyCountry = resource("data/GeoLite2-Country.mmdb");
+        const auto legacyAsn = resource("data/GeoLite2-ASN.mmdb");
+        const bool legacyExists = std::filesystem::exists(legacyCountry, ec) || std::filesystem::exists(legacyAsn, ec);
+
+        if (legacyExists) {
+            const std::string migrationMsg = " (found in old location; move to " + newDir.string() + " to persist across upgrades).";
+            auto legacyDb = std::make_unique<Database>(legacyCountry, legacyAsn, migrationMsg);
+            if (legacyDb->countryOpen || legacyDb->asnOpen) {
+                m_database = std::move(legacyDb);
+                return;
+            }
+        }
+
+        // Default back to primary location if legacy files were missing or failed to open
+        m_database = std::make_unique<Database>(primaryCountry, primaryAsn);
+    }
 
     GeoIPResolver::GeoIPResolver(const std::filesystem::path& countryDatabasePath,
         const std::filesystem::path& asnDatabasePath, size_t cacheCapacity)
