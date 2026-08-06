@@ -3,7 +3,7 @@
 #include "core/ResourcePaths.hpp"
 
 #include <filesystem>
-#include <format>
+#include <string>
 #include <maxminddb.h>
 
 namespace core {
@@ -12,7 +12,7 @@ namespace core {
         if (info.organization.empty()) return std::string{"-"};
         return info.asn == 0
             ? info.organization
-            : std::format("AS{} {}", info.asn, info.organization);
+            : ("AS" + std::to_string(info.asn) + " " + info.organization);
     }
 
     namespace {
