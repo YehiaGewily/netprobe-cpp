@@ -204,7 +204,7 @@ jobs:
           mountpoint="$RUNNER_TEMP/netprobe-dmg-mount"
           mkdir -p "$mountpoint"
           echo "Mounting ${dmg[0]} at $mountpoint"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "${dmg[0]}"
+          echo "y" | hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "${dmg[0]}"
           trap 'hdiutil detach "$mountpoint" -quiet || true' EXIT
 
           ls -la "$mountpoint"
