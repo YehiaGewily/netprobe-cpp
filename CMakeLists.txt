@@ -61,12 +61,59 @@ if(WIN32)
     # core::userDataDir() to locate %LOCALAPPDATA%.
     set(NETPROBE_CORE_PLATFORM_LIBRARIES ws2_32 iphlpapi shell32 ole32)
     set(NETPROBE_GUI_PLATFORM_LIBRARIES dwmapi opengl32)
-else()
+elseif(APPLE)
+    # macOS ships libpcap with the OS and every Mac has the same SONAME, so the
+    # cross-distro problem the Linux branch solves does not exist here. Link the
+    # system library directly.
     find_path(PCAP_INCLUDE_DIR NAMES pcap.h pcap/pcap.h REQUIRED)
     find_library(PCAP_LIBRARY NAMES pcap REQUIRED)
     find_package(OpenGL REQUIRED)
 
     set(PCAP_LIBRARIES ${PCAP_LIBRARY})
+    set(NETPROBE_CORE_PLATFORM_LIBRARIES)
+    set(NETPROBE_GUI_PLATFORM_LIBRARIES OpenGL::GL)
+else()
+    # Linux (and other non-Apple Unix): build libpcap from source and link it
+    # statically. A dynamically linked binary bakes in the distro's libpcap
+    # SONAME — Ubuntu ships libpcap.so.0.8 while Arch and Fedora ship
+    # libpcap.so.1 — so a release built on Ubuntu refuses to start elsewhere
+    # with "libpcap.so.0.8: cannot open shared object file". Linking libpcap
+    # statically produces one binary that runs on every distribution with no
+    # compatibility symlink and no extra runtime package.
+    find_package(OpenGL REQUIRED)
+    include(FetchContent)
+
+    message(STATUS "Fetching libpcap...")
+    # Disable every optional capture backend. Each one that stays on links the
+    # static archive against a shared library (D-Bus, libnl, libibverbs, ...),
+    # which would put back exactly the runtime SONAME dependency we are removing.
+    set(DISABLE_DBUS      ON CACHE BOOL "" FORCE)
+    set(DISABLE_RDMA      ON CACHE BOOL "" FORCE)
+    set(DISABLE_BLUETOOTH ON CACHE BOOL "" FORCE)
+    set(DISABLE_USB       ON CACHE BOOL "" FORCE)
+    set(DISABLE_NETMAP    ON CACHE BOOL "" FORCE)
+    set(DISABLE_DPDK      ON CACHE BOOL "" FORCE)
+    # Build only the static archive; we neither ship nor link libpcap.so.
+    set(_netprobe_saved_shared ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_Declare(
+        libpcap
+        GIT_REPOSITORY https://github.com/the-tcpdump-group/libpcap.git
+        GIT_TAG        libpcap-1.10.5
+    )
+    FetchContent_MakeAvailable(libpcap)
+    set(BUILD_SHARED_LIBS ${_netprobe_saved_shared})
+
+    # libpcap's CMake exposes the static archive as pcap_static on newer
+    # releases, or as pcap when only the static build is enabled.
+    if(TARGET pcap_static)
+        set(PCAP_LIBRARIES pcap_static)
+    else()
+        set(PCAP_LIBRARIES pcap)
+    endif()
+    # The public headers (pcap.h, pcap/*.h) live in the fetched source tree.
+    set(PCAP_INCLUDE_DIR ${libpcap_SOURCE_DIR})
+
     set(NETPROBE_CORE_PLATFORM_LIBRARIES)
     set(NETPROBE_GUI_PLATFORM_LIBRARIES OpenGL::GL)
 endif()

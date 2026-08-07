@@ -90,7 +90,7 @@ namespace ui {
         if (m_captureActive) {
             textCentered(m_devices.empty()
                 ? "Capture is running."
-                : ("Listening on " + m_devices[m_selectedDeviceIndex].description + "."),
+                : ("Listening on " + m_devices[m_selectedDeviceIndex].displayLabel() + "."),
                 kText2);
             textCentered("If nothing appears, live capture may need elevated privileges.", kText3);
         } else {

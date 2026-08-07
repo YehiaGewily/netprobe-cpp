@@ -9,7 +9,13 @@
 namespace capture {
 
     struct DeviceInfo {
+        // Stable interface identifier passed back to open() (e.g. "wlo1" on
+        // Linux, "\Device\NPF_{GUID}" on Windows). Always populated.
         std::string name;
+        // Human-friendly description from the capture backend, or empty when
+        // it has none. libpcap leaves this blank for ordinary physical
+        // interfaces on Linux/macOS, so callers must fall back to `name` for a
+        // display label rather than assuming a description exists.
         std::string description;
     };
 

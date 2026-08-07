@@ -797,10 +797,10 @@ namespace ui {
             ImGui::BeginCombo("##deviceCombo", "No adapters detected");
             ImGui::EndCombo();
             ImGui::EndDisabled();
-        } else if (ImGui::BeginCombo("##deviceCombo", m_devices[m_selectedDeviceIndex].description.c_str())) {
+        } else if (ImGui::BeginCombo("##deviceCombo", m_devices[m_selectedDeviceIndex].displayLabel().c_str())) {
             for (int n = 0; n < static_cast<int>(m_devices.size()); n++) {
                 const bool is_selected = (m_selectedDeviceIndex == n);
-                if (ImGui::Selectable(m_devices[n].description.c_str(), is_selected)) {
+                if (ImGui::Selectable(m_devices[n].displayLabel().c_str(), is_selected)) {
                     m_selectedDeviceIndex = n;
                     clearCaptureView();
                     setPaused(false);

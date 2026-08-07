@@ -20,7 +20,7 @@ namespace capture {
 
                 for (pcap_if_t* device = allDevices; device; device = device->next) {
                     devices.push_back({device->name ? device->name : "Unknown",
-                        device->description ? device->description : "No Description"});
+                        device->description ? device->description : ""});
                 }
                 pcap_freealldevs(allDevices);
                 return devices;
