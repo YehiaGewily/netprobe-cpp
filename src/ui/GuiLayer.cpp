@@ -888,11 +888,14 @@ namespace ui {
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
 
-        // Subtle separator line below the control bar.
+        // Brand hairline below the control bar: a faint cyan→violet sweep that
+        // spans the full width, echoing the website's gradient system while
+        // still reading as a divider.
         const ImVec2 lineP = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddLine(
-            lineP, ImVec2(lineP.x + ImGui::GetContentRegionAvail().x, lineP.y),
-            ImGui::GetColorU32(kBorderSoft));
+        const float lineW = ImGui::GetContentRegionAvail().x;
+        drawGradientRectH(ImGui::GetWindowDrawList(), lineP,
+            ImVec2(lineP.x + lineW, lineP.y + std::max(1.0f, scaled(1.5f))),
+            kIsDarkTheme ? 0.55f : 0.70f);
     }
 
     bool GuiLayer::encryptedDnsDominates() const {

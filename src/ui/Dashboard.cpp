@@ -53,6 +53,19 @@ namespace ui {
             ImGui::PushID(static_cast<int>(i));
             if (ImGui::BeginChild("kpi", ImVec2(tileW, tileH), true,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                // Gradient cap along the top edge. Each of the four tiles paints
+                // one quarter-slice of the brand gradient, so the strip reads as
+                // a single cyan→violet sweep left to right.
+                const ImVec2 wp = ImGui::GetWindowPos();
+                const float ww = ImGui::GetWindowSize().x;
+                const float inset = scaled(10.0f); // clear the rounded corners
+                const float sliceW = 1.0f / static_cast<float>(tiles.size());
+                const float t0 = static_cast<float>(i) * sliceW;
+                const float t1 = static_cast<float>(i + 1) * sliceW;
+                drawGradientRectH(ImGui::GetWindowDrawList(),
+                    ImVec2(wp.x + inset, wp.y),
+                    ImVec2(wp.x + ww - inset, wp.y + scaled(3.0f)), 1.0f, t0, t1);
+
                 ImGui::TextColored(kText3, "%s", t.label);
                 ImGui::Spacing();
                 if (m_fontHeadline) ImGui::PushFont(m_fontHeadline);
@@ -247,10 +260,13 @@ namespace ui {
                         ImVec2(barP.x, trackY),
                         ImVec2(barP.x + barW, trackY + barH),
                         ImGui::GetColorU32(kBgInput), barH * 0.5f);
-                    dl->AddRectFilled(
+                    // Fill the value portion with the brand gradient, mapping the
+                    // right edge to the bar's fraction so a full bar sweeps the
+                    // whole cyan→violet range and a short one shows just the cyan.
+                    drawGradientRectH(dl,
                         ImVec2(barP.x, trackY),
                         ImVec2(barP.x + barW * fraction, trackY + barH),
-                        ImGui::GetColorU32(kAccent), barH * 0.5f);
+                        1.0f, 0.0f, fraction);
                     ImGui::Dummy(ImVec2(barW, ImGui::GetTextLineHeight()));
 
                     ImGui::SameLine();

@@ -19,65 +19,101 @@ namespace ui {
     // (Linear-inspired) palette so code that reads a token before init()
     // still gets sensible colors.
     inline bool   kIsDarkTheme = true;
-    inline ImVec4 kBgBase      = ImVec4(0.039f, 0.039f, 0.047f, 1.00f); // #0A0A0C
-    inline ImVec4 kBgSurface   = ImVec4(0.075f, 0.075f, 0.094f, 1.00f); // #131318
-    inline ImVec4 kBgElevated  = ImVec4(0.102f, 0.102f, 0.125f, 1.00f); // #1A1A20
-    inline ImVec4 kBgInput     = ImVec4(0.117f, 0.117f, 0.149f, 1.00f); // #1E1E26
-    inline ImVec4 kBorderSoft  = ImVec4(0.122f, 0.122f, 0.149f, 1.00f); // #1F1F26
-    inline ImVec4 kBorder      = ImVec4(0.165f, 0.165f, 0.208f, 1.00f); // #2A2A35
+    inline ImVec4 kBgBase      = ImVec4(0.035f, 0.039f, 0.051f, 1.00f); // #090A0D
+    inline ImVec4 kBgSurface   = ImVec4(0.047f, 0.055f, 0.075f, 1.00f); // #0C0E13
+    inline ImVec4 kBgElevated  = ImVec4(0.071f, 0.078f, 0.106f, 1.00f); // #12141B
+    inline ImVec4 kBgInput     = ImVec4(0.086f, 0.094f, 0.122f, 1.00f); // #16181F
+    inline ImVec4 kBorderSoft  = ImVec4(0.102f, 0.110f, 0.141f, 1.00f); // #1A1C24
+    inline ImVec4 kBorder      = ImVec4(0.149f, 0.165f, 0.204f, 1.00f); // #262A34
 
-    inline ImVec4 kBgHover     = ImVec4(0.149f, 0.149f, 0.184f, 1.00f); // #26262F
-    inline ImVec4 kBgActive    = ImVec4(0.196f, 0.196f, 0.243f, 1.00f); // #32323E
+    inline ImVec4 kBgHover     = ImVec4(0.110f, 0.122f, 0.157f, 1.00f); // #1C1F28
+    inline ImVec4 kBgActive    = ImVec4(0.149f, 0.169f, 0.216f, 1.00f); // #262B37
 
-    inline ImVec4 kText1       = ImVec4(0.925f, 0.925f, 0.933f, 1.00f); // #ECECEE
-    inline ImVec4 kText2       = ImVec4(0.600f, 0.600f, 0.639f, 1.00f); // #9999A3
-    inline ImVec4 kText3       = ImVec4(0.361f, 0.361f, 0.408f, 1.00f); // #5C5C68
+    inline ImVec4 kText1       = ImVec4(0.957f, 0.965f, 0.980f, 1.00f); // #F4F6FA
+    inline ImVec4 kText2       = ImVec4(0.604f, 0.643f, 0.702f, 1.00f); // #9AA4B3
+    inline ImVec4 kText3       = ImVec4(0.357f, 0.392f, 0.451f, 1.00f); // #5B6473
 
-    inline ImVec4 kAccent      = ImVec4(0.369f, 0.416f, 0.824f, 1.00f); // #5E6AD2  Linear violet-blue
-    inline ImVec4 kAccentSoft  = ImVec4(0.369f, 0.416f, 0.824f, 0.22f);
-    inline ImVec4 kAccentFaint = ImVec4(0.369f, 0.416f, 0.824f, 0.10f);
-    inline ImVec4 kSuccess     = ImVec4(0.290f, 0.871f, 0.502f, 1.00f); // #4ADE80
+    inline ImVec4 kAccent      = ImVec4(0.176f, 0.831f, 0.933f, 1.00f); // #2DD4EE  site cyan
+    inline ImVec4 kAccentSoft  = ImVec4(0.176f, 0.831f, 0.933f, 0.20f);
+    inline ImVec4 kAccentFaint = ImVec4(0.176f, 0.831f, 0.933f, 0.10f);
+    inline ImVec4 kSuccess     = ImVec4(0.204f, 0.827f, 0.600f, 1.00f); // #34D399 emerald
     inline ImVec4 kWarning     = ImVec4(0.984f, 0.749f, 0.141f, 1.00f); // #FBBF24
     inline ImVec4 kDanger      = ImVec4(0.973f, 0.443f, 0.443f, 1.00f); // #F87171
+
+    // Brand gradient — the website's cyan → blue → violet system. Constant
+    // across themes because it is only ever painted as a fill under white or
+    // dark shapes, never used as text. Endpoints match docs/styles.css --grad.
+    inline constexpr ImVec4 kGradStart = ImVec4(0.176f, 0.831f, 0.933f, 1.00f); // #2DD4EE
+    inline constexpr ImVec4 kGradMid   = ImVec4(0.310f, 0.545f, 0.961f, 1.00f); // #4F8BF5
+    inline constexpr ImVec4 kGradEnd   = ImVec4(0.486f, 0.435f, 0.941f, 1.00f); // #7C6FF0
 
     inline void applyPalette(bool dark) {
         kIsDarkTheme = dark;
         if (dark) {
-            kBgBase      = ImVec4(0.039f, 0.039f, 0.047f, 1.00f); // #0A0A0C
-            kBgSurface   = ImVec4(0.075f, 0.075f, 0.094f, 1.00f); // #131318
-            kBgElevated  = ImVec4(0.102f, 0.102f, 0.125f, 1.00f); // #1A1A20
-            kBgInput     = ImVec4(0.117f, 0.117f, 0.149f, 1.00f); // #1E1E26
-            kBorderSoft  = ImVec4(0.122f, 0.122f, 0.149f, 1.00f); // #1F1F26
-            kBorder      = ImVec4(0.165f, 0.165f, 0.208f, 1.00f); // #2A2A35
-            kBgHover     = ImVec4(0.149f, 0.149f, 0.184f, 1.00f); // #26262F
-            kBgActive    = ImVec4(0.196f, 0.196f, 0.243f, 1.00f); // #32323E
-            kText1       = ImVec4(0.925f, 0.925f, 0.933f, 1.00f); // #ECECEE
-            kText2       = ImVec4(0.600f, 0.600f, 0.639f, 1.00f); // #9999A3
-            kText3       = ImVec4(0.361f, 0.361f, 0.408f, 1.00f); // #5C5C68
-            kSuccess     = ImVec4(0.290f, 0.871f, 0.502f, 1.00f); // #4ADE80
+            kBgBase      = ImVec4(0.035f, 0.039f, 0.051f, 1.00f); // #090A0D
+            kBgSurface   = ImVec4(0.047f, 0.055f, 0.075f, 1.00f); // #0C0E13
+            kBgElevated  = ImVec4(0.071f, 0.078f, 0.106f, 1.00f); // #12141B
+            kBgInput     = ImVec4(0.086f, 0.094f, 0.122f, 1.00f); // #16181F
+            kBorderSoft  = ImVec4(0.102f, 0.110f, 0.141f, 1.00f); // #1A1C24
+            kBorder      = ImVec4(0.149f, 0.165f, 0.204f, 1.00f); // #262A34
+            kBgHover     = ImVec4(0.110f, 0.122f, 0.157f, 1.00f); // #1C1F28
+            kBgActive    = ImVec4(0.149f, 0.169f, 0.216f, 1.00f); // #262B37
+            kText1       = ImVec4(0.957f, 0.965f, 0.980f, 1.00f); // #F4F6FA
+            kText2       = ImVec4(0.604f, 0.643f, 0.702f, 1.00f); // #9AA4B3
+            kText3       = ImVec4(0.357f, 0.392f, 0.451f, 1.00f); // #5B6473
+            kSuccess     = ImVec4(0.204f, 0.827f, 0.600f, 1.00f); // #34D399
             kWarning     = ImVec4(0.984f, 0.749f, 0.141f, 1.00f); // #FBBF24
             kDanger      = ImVec4(0.973f, 0.443f, 0.443f, 1.00f); // #F87171
         } else {
-            kBgBase      = ImVec4(0.973f, 0.973f, 0.980f, 1.00f); // #F8F8FA
+            kBgBase      = ImVec4(0.961f, 0.969f, 0.984f, 1.00f); // #F5F7FB
             kBgSurface   = ImVec4(1.000f, 1.000f, 1.000f, 1.00f); // #FFFFFF
             kBgElevated  = ImVec4(1.000f, 1.000f, 1.000f, 1.00f); // #FFFFFF
-            kBgInput     = ImVec4(0.929f, 0.929f, 0.949f, 1.00f); // #EDEDF2
-            kBorderSoft  = ImVec4(0.894f, 0.894f, 0.918f, 1.00f); // #E4E4EA
-            kBorder      = ImVec4(0.831f, 0.831f, 0.863f, 1.00f); // #D4D4DC
-            kBgHover     = ImVec4(0.882f, 0.882f, 0.910f, 1.00f); // #E1E1E8
-            kBgActive    = ImVec4(0.831f, 0.831f, 0.871f, 1.00f); // #D4D4DE
-            kText1       = ImVec4(0.102f, 0.102f, 0.129f, 1.00f); // #1A1A21
-            kText2       = ImVec4(0.361f, 0.361f, 0.408f, 1.00f); // #5C5C68
-            kText3       = ImVec4(0.580f, 0.580f, 0.627f, 1.00f); // #9494A0
+            kBgInput     = ImVec4(0.929f, 0.945f, 0.969f, 1.00f); // #EDF1F7
+            kBorderSoft  = ImVec4(0.886f, 0.910f, 0.941f, 1.00f); // #E2E8F0
+            kBorder      = ImVec4(0.796f, 0.835f, 0.882f, 1.00f); // #CBD5E1
+            kBgHover     = ImVec4(0.906f, 0.929f, 0.961f, 1.00f); // #E7EDF5
+            kBgActive    = ImVec4(0.847f, 0.878f, 0.925f, 1.00f); // #D8E0EC
+            kText1       = ImVec4(0.059f, 0.090f, 0.165f, 1.00f); // #0F172A
+            kText2       = ImVec4(0.278f, 0.333f, 0.412f, 1.00f); // #475569
+            kText3       = ImVec4(0.541f, 0.592f, 0.659f, 1.00f); // #8A97A8
             kSuccess     = ImVec4(0.086f, 0.639f, 0.290f, 1.00f); // #16A34A
             kWarning     = ImVec4(0.710f, 0.400f, 0.020f, 1.00f); // #B56605
             kDanger      = ImVec4(0.863f, 0.149f, 0.149f, 1.00f); // #DC2626
         }
-        // The accent works on both canvases; only its translucent tints change
-        // strength so hover/selection states stay visible on white.
-        kAccent      = ImVec4(0.369f, 0.416f, 0.824f, 1.00f);     // #5E6AD2
-        kAccentSoft  = ImVec4(0.369f, 0.416f, 0.824f, dark ? 0.22f : 0.28f);
-        kAccentFaint = ImVec4(0.369f, 0.416f, 0.824f, dark ? 0.10f : 0.14f);
+        // Cyan reads brilliantly on the dark canvas but washes out on white, so
+        // the light theme anchors the solid accent on the gradient's blue mid
+        // stop; the gradient fills themselves stay cyan→violet on both canvases.
+        kAccent      = dark ? ImVec4(0.176f, 0.831f, 0.933f, 1.00f)  // #2DD4EE cyan
+                            : ImVec4(0.310f, 0.545f, 0.961f, 1.00f); // #4F8BF5 blue
+        kAccentSoft  = ImVec4(kAccent.x, kAccent.y, kAccent.z, dark ? 0.20f : 0.26f);
+        kAccentFaint = ImVec4(kAccent.x, kAccent.y, kAccent.z, dark ? 0.10f : 0.14f);
+    }
+
+    // Linear interpolation between two colors.
+    inline ImVec4 lerpVec4(const ImVec4& a, const ImVec4& b, float t) {
+        return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                      a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+    }
+
+    // Sample the three-stop brand gradient at t in [0,1].
+    inline ImVec4 gradSample(float t) {
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        return t < 0.5f ? lerpVec4(kGradStart, kGradMid, t * 2.0f)
+                        : lerpVec4(kGradMid, kGradEnd, (t - 0.5f) * 2.0f);
+    }
+
+    // Horizontal cyan→violet gradient fill for hero elements (KPI caps, share
+    // bars, the toolbar hairline). t0/t1 map the brand gradient to the left and
+    // right edges so a partial-width bar still shows a continuous sweep. Corners
+    // are square — multi-color fills cannot round, which is invisible on the
+    // thin strips this is used for.
+    inline void drawGradientRectH(ImDrawList* dl, const ImVec2& a, const ImVec2& b,
+                                  float alpha = 1.0f, float t0 = 0.0f, float t1 = 1.0f) {
+        ImVec4 cl = gradSample(t0); cl.w = alpha;
+        ImVec4 cr = gradSample(t1); cr.w = alpha;
+        const ImU32 l = ImGui::GetColorU32(cl);
+        const ImU32 r = ImGui::GetColorU32(cr);
+        dl->AddRectFilledMultiColor(a, b, l, r, r, l);
     }
 
     inline int64_t currentUnixTimeMicroseconds() {
@@ -123,13 +159,13 @@ namespace ui {
 
     inline ImVec4 protocolColor(const std::string& protocol) {
         if (kIsDarkTheme) {
-            if (protocol == "TCP")  return ImVec4(0.55f, 0.66f, 0.92f, 1.0f);
-            if (protocol == "UDP")  return ImVec4(0.55f, 0.78f, 0.55f, 1.0f);
-            if (protocol == "ICMP") return ImVec4(0.84f, 0.69f, 0.43f, 1.0f);
+            if (protocol == "TCP")  return ImVec4(0.506f, 0.549f, 0.973f, 1.0f); // #818CF8 indigo
+            if (protocol == "UDP")  return ImVec4(0.204f, 0.827f, 0.600f, 1.0f); // #34D399 emerald
+            if (protocol == "ICMP") return ImVec4(0.961f, 0.706f, 0.294f, 1.0f); // #F5B44B amber
         } else {
-            if (protocol == "TCP")  return ImVec4(0.24f, 0.35f, 0.72f, 1.0f);
-            if (protocol == "UDP")  return ImVec4(0.16f, 0.52f, 0.26f, 1.0f);
-            if (protocol == "ICMP") return ImVec4(0.66f, 0.45f, 0.10f, 1.0f);
+            if (protocol == "TCP")  return ImVec4(0.310f, 0.275f, 0.898f, 1.0f); // #4F46E5
+            if (protocol == "UDP")  return ImVec4(0.055f, 0.624f, 0.431f, 1.0f); // #0E9F6E
+            if (protocol == "ICMP") return ImVec4(0.710f, 0.400f, 0.020f, 1.0f); // #B56605
         }
         return kText3;
     }
@@ -140,20 +176,20 @@ namespace ui {
     inline ImVec4 serviceColor(const std::string& service) {
         if (service.empty()) return kText3;
         constexpr std::array<ImVec4, 6> dark = {
-            ImVec4(0.45f, 0.52f, 0.91f, 1.0f), // indigo
-            ImVec4(0.50f, 0.78f, 0.69f, 1.0f), // teal
-            ImVec4(0.91f, 0.62f, 0.52f, 1.0f), // coral
-            ImVec4(0.71f, 0.61f, 0.91f, 1.0f), // lavender
-            ImVec4(0.84f, 0.73f, 0.45f, 1.0f), // sand
-            ImVec4(0.55f, 0.78f, 0.55f, 1.0f), // moss
+            ImVec4(0.506f, 0.549f, 0.973f, 1.0f), // #818CF8 indigo
+            ImVec4(0.204f, 0.827f, 0.600f, 1.0f), // #34D399 emerald
+            ImVec4(0.984f, 0.541f, 0.420f, 1.0f), // #FB8A6B coral
+            ImVec4(0.655f, 0.545f, 0.980f, 1.0f), // #A78BFA violet
+            ImVec4(0.961f, 0.769f, 0.318f, 1.0f), // #F5C451 sand
+            ImVec4(0.220f, 0.741f, 0.973f, 1.0f), // #38BDF8 sky
         };
         constexpr std::array<ImVec4, 6> light = {
-            ImVec4(0.27f, 0.34f, 0.75f, 1.0f), // indigo
-            ImVec4(0.13f, 0.52f, 0.44f, 1.0f), // teal
-            ImVec4(0.75f, 0.34f, 0.24f, 1.0f), // coral
-            ImVec4(0.48f, 0.35f, 0.75f, 1.0f), // lavender
-            ImVec4(0.62f, 0.48f, 0.14f, 1.0f), // sand
-            ImVec4(0.24f, 0.52f, 0.26f, 1.0f), // moss
+            ImVec4(0.310f, 0.275f, 0.898f, 1.0f), // #4F46E5 indigo
+            ImVec4(0.055f, 0.624f, 0.431f, 1.0f), // #0E9F6E emerald
+            ImVec4(0.863f, 0.353f, 0.235f, 1.0f), // #DC5A3C coral
+            ImVec4(0.486f, 0.227f, 0.929f, 1.0f), // #7C3AED violet
+            ImVec4(0.706f, 0.502f, 0.102f, 1.0f), // #B4801A sand
+            ImVec4(0.008f, 0.518f, 0.780f, 1.0f), // #0284C7 sky
         };
         size_t h = 0;
         for (char c : service) h = h * 131u + static_cast<unsigned char>(c);
