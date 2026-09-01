@@ -18,11 +18,14 @@ $sizes          = @(16, 32, 48, 64, 128, 256)
 # glfwSetWindowIcon (16/32/48 covers every WM's preferred slot).
 $embeddedSizes  = @(16, 32, 48)
 
-# Palette mirrors src/ui/GuiTheme.hpp so the icon reads as part of the UI.
-$bgColor     = [System.Drawing.Color]::FromArgb(255, 13, 13, 18)   # near-black
-$accentColor = [System.Drawing.Color]::FromArgb(255, 94, 106, 210) # #5E6AD2 violet
-$accentSoft  = [System.Drawing.Color]::FromArgb(96,  94, 106, 210) # ring outline
-$dotColor    = [System.Drawing.Color]::FromArgb(255, 240, 240, 245)
+# Palette mirrors the website favicon (docs/index.html) and the brand gradient
+# in src/ui/GuiTheme.hpp so the app icon, taskbar icon, and site favicon are one
+# identity: a cyan→blue→violet gradient tile with a white "probe descending
+# through network nodes" glyph.
+$gradStart = [System.Drawing.Color]::FromArgb(255, 45, 212, 238)  # #2DD4EE cyan
+$gradMid   = [System.Drawing.Color]::FromArgb(255, 79, 139, 245)  # #4F8BF5 blue
+$gradEnd   = [System.Drawing.Color]::FromArgb(255, 124, 111, 240) # #7C6FF0 violet
+$glyphColor = [System.Drawing.Color]::FromArgb(235, 255, 255, 255) # white, ~0.92 alpha
 
 function New-RoundedPath {
     param([System.Drawing.Rectangle]$rect, [int]$radius)
@@ -42,40 +45,42 @@ function Render-Icon {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 
-    # Rounded-square background.
-    $cornerRadius = [Math]::Max(2, [int]($size / 8))
+    # The glyph is authored in a 32-unit viewBox (matching the SVG favicon);
+    # every coordinate below is multiplied by this scale for the target size.
+    $f = $size / 32.0
+
+    # Rounded-square tile filled with the diagonal cyan→blue→violet gradient.
+    $cornerRadius = [Math]::Max(2, [int]($size / 4))
     $rect = New-Object System.Drawing.Rectangle 0, 0, $size, $size
     $path = New-RoundedPath -rect $rect -radius $cornerRadius
-    $bgBrush = New-Object System.Drawing.SolidBrush $bgColor
-    $g.FillPath($bgBrush, $path)
-    $bgBrush.Dispose()
+    $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+        (New-Object System.Drawing.PointF(0, 0)),
+        (New-Object System.Drawing.PointF([single]$size, [single]$size)),
+        $gradStart, $gradEnd)
+    $blend = New-Object System.Drawing.Drawing2D.ColorBlend(3)
+    $blend.Colors    = @($gradStart, $gradMid, $gradEnd)
+    $blend.Positions = @([single]0.0, [single]0.5, [single]1.0)
+    $grad.InterpolationColors = $blend
+    $g.FillPath($grad, $path)
+    $grad.Dispose()
     $path.Dispose()
 
-    $center = $size / 2.0
+    # Probe glyph: three top nodes whose links converge on a lower node.
+    $pen = New-Object System.Drawing.Pen($glyphColor, [single](1.9 * $f))
+    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
+    $g.DrawLine($pen, [single](9 * $f),  [single](11 * $f), [single](16 * $f), [single](22 * $f))
+    $g.DrawLine($pen, [single](16 * $f), [single](11 * $f), [single](16 * $f), [single](22 * $f))
+    $g.DrawLine($pen, [single](23 * $f), [single](11 * $f), [single](16 * $f), [single](22 * $f))
+    $pen.Dispose()
 
-    # Outer pulse ring (soft accent).
-    $ringDiameter = $size * 0.72
-    $ringRect = New-Object System.Drawing.RectangleF `
-        (($center - $ringDiameter / 2.0), ($center - $ringDiameter / 2.0), $ringDiameter, $ringDiameter)
-    $ringPen = New-Object System.Drawing.Pen $accentSoft, ([single]($size / 18.0))
-    $g.DrawEllipse($ringPen, $ringRect)
-    $ringPen.Dispose()
-
-    # Solid accent core.
-    $coreDiameter = $size * 0.42
-    $coreRect = New-Object System.Drawing.RectangleF `
-        (($center - $coreDiameter / 2.0), ($center - $coreDiameter / 2.0), $coreDiameter, $coreDiameter)
-    $accentBrush = New-Object System.Drawing.SolidBrush $accentColor
-    $g.FillEllipse($accentBrush, $coreRect)
-    $accentBrush.Dispose()
-
-    # Bright highlight dot in the center.
-    $dotDiameter = [Math]::Max(2.0, $size * 0.16)
-    $dotRect = New-Object System.Drawing.RectangleF `
-        (($center - $dotDiameter / 2.0), ($center - $dotDiameter / 2.0), $dotDiameter, $dotDiameter)
-    $dotBrush = New-Object System.Drawing.SolidBrush $dotColor
-    $g.FillEllipse($dotBrush, $dotRect)
-    $dotBrush.Dispose()
+    $nodeBrush = New-Object System.Drawing.SolidBrush $glyphColor
+    foreach ($n in @(@(9, 11, 2.3), @(16, 11, 2.3), @(23, 11, 2.3), @(16, 22.5, 2.9))) {
+        $cx = $n[0] * $f; $cy = $n[1] * $f; $r = $n[2] * $f
+        $g.FillEllipse($nodeBrush,
+            [single]($cx - $r), [single]($cy - $r), [single](2 * $r), [single](2 * $r))
+    }
+    $nodeBrush.Dispose()
 
     $g.Dispose()
     return $bmp

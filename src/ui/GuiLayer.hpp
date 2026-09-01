@@ -58,6 +58,16 @@ namespace ui {
         struct DeviceInfo {
             std::string name;
             std::string description;
+
+            // Label shown in the adapter menu and status text. Windows
+            // interface names are opaque \Device\NPF_{GUID} strings, so the
+            // friendly description is preferred there; on Linux/macOS libpcap
+            // leaves the description blank for physical interfaces, so we fall
+            // back to the system name (e.g. wlo1), which is otherwise the only
+            // thing distinguishing one adapter from another.
+            std::string displayLabel() const {
+                return description.empty() ? name : description;
+            }
         };
 
         GuiLayer(core::PacketQueue& queue);

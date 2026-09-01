@@ -65,7 +65,7 @@ static int run() {
 
     // Auto-start on the first device when live capture is available.
     if (!devices.empty()) {
-        std::cout << "Auto-selecting device: " << devices[0].description << '\n';
+        std::cout << "Auto-selecting device: " << devices[0].name << '\n';
         engine.startCapture(devices[0].name);
         gui.setCaptureActive(true);
     }
