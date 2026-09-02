@@ -5,6 +5,10 @@
 # --- CMake / Build Outputs ---
 /build*/
 /out/
+/bin/
+/package/
+/smoke/
+/dist/
 CMakeCache.txt
 CMakeFiles/
 CMakeSettings.json
@@ -17,6 +21,10 @@ CPackConfig.cmake
 CPackSourceConfig.cmake
 _CPack_Packages/
 *.zip
+*.tar.gz
+*.tgz
+*.dmg
+*.pkg
 
 # --- Compiler, Linker, and Debug Files ---
 *.o
@@ -36,6 +44,7 @@ _CPack_Packages/
 *.ilk
 *.idb
 *.exp
+*.d
 
 # --- Visual Studio (MSVC) Artifacts ---
 .vs/
@@ -59,29 +68,44 @@ _CPack_Packages/
 *.iws
 *.iml
 *.ipr
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
 
 # --- Runtime / Application Output ---
-# Written by the app at exit; per-machine state, not project configuration.
+# Written by the app at exit or CLI export; per-machine state.
 imgui.ini
 netprobe-layout.ini
 netprobe-settings.ini
+flows.json
+flows.csv
+
+# --- User-Captured Traffic & Test Data ---
+# Keep intentionally versioned PCAP fixtures under tests/ instead.
+*.pcap
+*.pcapng
+!/tests/**
+!/data/README.md
+/captures/
+/exports/
 
 # --- GeoIP Data and Local Secrets ---
 # GeoLite databases are user-supplied/downloaded and must not be committed.
 /data/*.mmdb
 /data/*.mmdb.gz
-/data/*.tar.gz
 
-# Sample PCAP is generated at build time by NetProbeMakeSamplePcap.
-/data/sample.pcap
+# Environment and secrets
 .env
 .env.*
 !.env.example
-
-# --- User-Captured Traffic ---
-# Keep intentionally versioned PCAP fixtures under tests/ instead.
-/captures/
-/exports/
+*.pem
+*.key
+*.pfx
+*.p12
+*.cer
+*.crt
+credentials*.json
 
 # --- External & Dependency Cache ---
 /external/*
@@ -97,23 +121,34 @@ netprobe-settings.ini
 .Trashes
 ehthumbs.db
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
 # --- Agent Workspace Cache ---
 /.agents/
+/.gemini/
+/.claude/
+/.cursor/
 
-# --- Local Planning Documents ---
-# Implementation plans consumed by AI agents; not part of the shipped repo.
+# --- Local Planning & Scratch Documents ---
 /plans/
+*.scratch
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
 
 # --- Demo Recording ---
 /docs/record-demo.md
 
-# --- libFuzzer Artifacts ---
-# Crash / leak / timeout inputs and stats files written by libFuzzer at runtime.
+# --- libFuzzer & Crash Artifacts ---
 crash-*
 leak-*
 oom-*
 timeout-*
 slow-unit-*
 fuzz-*.log
-
+core
+core.*
+*.dmp
