@@ -103,11 +103,12 @@ Test the extracted prebuilt binaries on target systems:
 
 ## 5. Formal Acceptance Sign-Off Record
 
-Record all post-publication verification results below:
+Record of post-publication verification results for release **v1.3.1** (published 2026-09-02):
 
 | Target OS & Version | Downloaded Artifact File | SHA-256 Checksum Verified | Verification Date | Tester | Status | Notes |
 |---|---|---|---|---|---|---|
-| Windows 11 x64 | `NetProbe-1.3.1-Windows.zip` | [ ] Yes / [ ] No | YYYY-MM-DD | Maintainer | PASS / FAIL | Tested Admin live capture & offline sample |
-| Ubuntu 24.04 LTS (X11) | `NetProbe-1.3.1-Linux.zip` | [ ] Yes / [ ] No | YYYY-MM-DD | Maintainer | PASS / FAIL | Tested `setcap`, static libpcap confirmed |
-| Ubuntu 24.04 LTS (Wayland) | `NetProbe-1.3.1-Linux.zip` | [ ] Yes / [ ] No | YYYY-MM-DD | Maintainer | PASS / FAIL | Tested capability launch without sudo |
-| macOS 14 / 15 (Apple Silicon) | `NetProbe-1.3.1-Darwin.dmg` | [ ] Yes / [ ] No | YYYY-MM-DD | Maintainer | PASS / FAIL | Tested DMG mount, universal binary, GUI |
+| Windows 11 x64 | `NetProbe-1.3.1-Windows.zip` (`69d7fe68...`) | [x] Yes | 2026-09-02 | YehiaGewily | PASS | Downloaded from GitHub release; SHA-256 matched; layout clean; CLI reports 1.3.1; JSON/CSV export on sample.pcap verified; offline GUI & Admin live capture verified. |
+| Ubuntu 24.04 LTS (X11) | `NetProbe-1.3.1-Linux.zip` (`75409cc9...`) | [x] Yes | 2026-09-02 | GitHub CI & YehiaGewily | PASS | Statically linked libpcap verified via `readelf -d` in smoke test; no system libpcap-dev dependency; sample PCAP flow export verified. |
+| Ubuntu 24.04 LTS (Wayland) | `NetProbe-1.3.1-Linux.zip` (`75409cc9...`) | [x] Yes | 2026-09-02 | GitHub CI & YehiaGewily | PASS | Self-contained static binary verified; capability execution (`setcap cap_net_raw,cap_net_admin+eip`) verified without sudo. |
+| macOS 14 / 15 (Universal) | `NetProbe-1.3.1-Darwin.dmg` (`d8670951...`) / `.zip` (`8be66541...`) | [x] Yes | 2026-09-02 | GitHub CI & YehiaGewily | PASS | DMG mount verified; universal binaries (`x86_64` & `arm64`) verified via `lipo`; Info.plist validated via `plutil`; in-situ CLI export verified. |
+
