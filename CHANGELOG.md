@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-02
+
+### Added
+- Automated `readelf` verification in Linux CI package smoke tests asserting that prebuilt binaries carry no dynamic `libpcap` dependencies.
+- Release acceptance testing checklist (`docs/RELEASE_CHECKLIST.md`) covering automated pre-tag checks, artifact verification, and live-capture acceptance protocols.
+
+### Changed
+- Refreshed GUI visual design with modern dark theme styling, embedded window icon, and redesigned dashboard metrics layout.
+- Scoped Linux desktop runtime documentation to clarify that prebuilt binaries require standard system libraries (including glibc, GTK3, OpenGL, and window-system libraries), while `libpcap` is self-contained.
+- Updated user documentation to recommend verifying the `SHA256SUMS.txt` hash and origin before safely launching unsigned binaries via scoped SmartScreen ("More info" -> "Run anyway") and Gatekeeper (Control-click -> "Open") steps, rather than disabling system protections globally.
+- Synced documented test count to 95 unit and integration tests across README, documentation, and signing policy.
+
+### Fixed
+- Statically compile `libpcap 1.10.5` via CMake `FetchContent` on Linux and explicitly set `BUILD_WITH_LIBNL OFF` during pcap configuration, resolving undefined symbol link failures and eliminating distro-specific runtime SONAME mismatches (`libpcap.so.0.8` vs `libpcap.so.1`).
+- Removed `libpcap-dev` from all Linux CI runner environments, proving the static build is completely self-contained.
+
+## [1.3.0] - 2026-08-06
+
 ### Added
 - macOS releases now ship a real `NetProbe.app` bundle inside a `.dmg`,
   with an icon, proper `Info.plist`, and a **universal binary** covering
@@ -120,7 +138,9 @@ with initial TCP RTT, GeoIP/ASN enrichment via GeoLite2, BPF capture filters,
 display filters, PCAP export, and a bundled `data/sample.pcap` for a
 no-privileges first run.
 
-[Unreleased]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/YehiaGewily/netprobe-cpp/compare/v1.0.0...v1.1.0

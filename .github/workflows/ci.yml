@@ -47,7 +47,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+          sudo apt-get install -y libgl1-mesa-dev libgtk-3-dev pkg-config
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=${{ matrix.build_testing }}
@@ -183,6 +183,15 @@ jobs:
           else
             cli=./netprobe-cli
           fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            for binary in "$cli" ./NetProbe; do
+              if readelf -d "$binary" | grep -Eiq '\(NEEDED\).*libpcap'; then
+                echo "::error::$binary dynamically depends on libpcap"
+                exit 1
+              fi
+            done
+          fi
+
           "$cli" --version
           "$cli" -r data/sample.pcap -o flows.json
           [ -s flows.json ] || { echo "::error::flow export from extracted package is empty"; exit 1; }
@@ -240,7 +249,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+          sudo apt-get install -y clang libgl1-mesa-dev libgtk-3-dev pkg-config
 
       - name: Configure with sanitizers
         env:
@@ -277,7 +286,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang clang-tidy libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+          sudo apt-get install -y clang clang-tidy libgl1-mesa-dev libgtk-3-dev pkg-config
 
       # Ninja rather than the default generator: clang-tidy needs
       # compile_commands.json, and configuring is enough to produce it
@@ -326,7 +335,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+          sudo apt-get install -y clang libgl1-mesa-dev libgtk-3-dev pkg-config
 
       - name: Configure
         env:

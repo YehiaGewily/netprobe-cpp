@@ -13,9 +13,9 @@ Download from [GitHub Releases](https://github.com/YehiaGewily/netprobe-cpp/rele
 - **Windows / Linux** — `NetProbe-<version>-Windows.zip` / `-Linux.zip`.
 - **macOS** — `NetProbe-<version>-Darwin.dmg`. Mount it, drag `NetProbe.app` into `Applications`.
 
-Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux releases require the system libpcap runtime. macOS ships libpcap with the OS.
+Windows releases require the [Npcap driver](https://npcap.com/#download) for live capture and PCAP support. Linux prebuilt binaries embed libpcap statically (no shared libpcap runtime package required; standard desktop dependencies include glibc, GTK3, OpenGL, and window-system libraries). macOS ships libpcap with the OS.
 
-Each release includes a `SHA256SUMS.txt` — verify your download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (or `Get-FileHash` on Windows). See [CHANGELOG.md](CHANGELOG.md) for what's new in each version, and [SIGNING.md](SIGNING.md) for the code-signing policy (currently unsigned; SignPath application in progress).
+Each release includes a `SHA256SUMS.txt` — always verify your download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (or `Get-FileHash` on Windows) and confirm the download origin. Because binaries are not yet code-signed with commercial certificates (see [SIGNING.md](SIGNING.md)), operating systems may display a prompt on first run. Once the checksum is verified, use the scoped launch option (Windows: "More info" → "Run anyway"; macOS: Control-click → "Open"); never disable system protections globally. See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
 
 ## Features
 
@@ -61,10 +61,10 @@ Each release includes a `SHA256SUMS.txt` — verify your download with `sha256su
 
 ## Prerequisites
 
-NetProbe uses Npcap on Windows and libpcap on Linux/macOS.
+NetProbe uses Npcap on Windows and libpcap on Linux/macOS (automatically fetched and compiled statically by CMake on Linux).
 
 - **Windows 10/11**: Visual Studio 2022 with C++ Desktop Development, the [Npcap driver](https://npcap.com/#download), and the Npcap SDK extracted to `C:\Npcap-SDK` (`Include` and `Lib` directly inside).
-- **Ubuntu/Debian**: `sudo apt install build-essential cmake libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config`
+- **Ubuntu/Debian**: `sudo apt install build-essential cmake libgl1-mesa-dev libgtk-3-dev pkg-config`
 - **macOS**: Xcode Command Line Tools and CMake. libpcap and OpenGL are provided by macOS; Native File Dialog uses Cocoa.
 
 ## Build Instructions
@@ -210,7 +210,7 @@ flowchart LR
 
 ## Quality
 
-- **89 unit and integration tests** (GoogleTest) covering protocol parsing, link-type handling, tunnel descent, TLS/QUIC ClientHello reassembly, HTTP header extraction, DNS record coverage, canonical flow keying, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures — including an end-to-end test that drives a crafted capture file through the same pipeline the UI runs, and end-to-end tests that run the real `netprobe-cli` binary over a capture file and validate the exported JSON and CSV.
+- **95 unit and integration tests** (GoogleTest) covering protocol parsing, link-type handling, tunnel descent, TLS/QUIC ClientHello reassembly, HTTP header extraction, DNS record coverage, canonical flow keying, RTT measurement, queue concurrency, GeoIP lookup, QUIC Initial decryption end-to-end, and both classic-PCAP + PCAPNG fixtures — including an end-to-end test that drives a crafted capture file through the same pipeline the UI runs, and end-to-end tests that run the real `netprobe-cli` binary over a capture file and validate the exported JSON and CSV.
 - **Adversarial input suite**: 40 named malformed-packet fixtures — headers claiming lengths the buffer does not contain, IPv4 IHL and total-length lies, IPv6 extension-header chains that overrun or self-reference, DNS compression-pointer loops and inflated record counts, truncated TLS records, QUIC connection-ID and token lengths beyond the packet — plus TCP option lengths of zero and options overrunning their header, and an exhaustive check that every prefix of a valid frame parses without crashing. Each fixture pins the degraded result it must produce, so a parser that starts inventing plausible answers fails the build rather than passing quietly. The same fixtures seed the fuzz corpus, taking it to 44 entries.
 - **libFuzzer harness** on `ProtocolParser::parse`, `DNSParser::parseResponse`, and the stateful `TlsReassembler` / `QuicTracker`, across every supported link type, with a deterministic seed corpus. CI fuzzes every push for 60 seconds on Ubuntu + Clang and uploads any crash inputs as build artifacts.
 - **AddressSanitizer + UndefinedBehaviorSanitizer** CI job runs the full test suite under ASan/UBSan on every push.

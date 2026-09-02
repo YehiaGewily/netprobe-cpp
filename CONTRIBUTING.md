@@ -4,7 +4,7 @@ Thanks for taking a look. NetProbe is a packet capture and analysis tool, which 
 
 ## Building
 
-You need CMake 3.20+, a C++20 compiler, and libpcap (or the Npcap SDK on Windows). All other dependencies are fetched and pinned automatically by CMake.
+You need CMake 3.20+ and a C++20 compiler. On Windows, install the Npcap SDK (on macOS libpcap ships with the OS; on Linux, CMake fetches and statically builds libpcap automatically). All other dependencies are fetched and pinned automatically by CMake.
 
 **Windows** — Visual Studio 2022 with the C++ Desktop workload, the [Npcap driver](https://npcap.com/#download), and the Npcap SDK extracted to `C:\Npcap-SDK`:
 
@@ -12,7 +12,7 @@ You need CMake 3.20+, a C++20 compiler, and libpcap (or the Npcap SDK on Windows
 .\build_project.bat
 ```
 
-**Linux** — `sudo apt install build-essential cmake libpcap-dev libgl1-mesa-dev libgtk-3-dev pkg-config`
+**Linux** — `sudo apt install build-essential cmake libgl1-mesa-dev libgtk-3-dev pkg-config`
 
 **macOS** — Xcode Command Line Tools and CMake; libpcap and OpenGL ship with the OS.
 

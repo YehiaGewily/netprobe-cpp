@@ -20,22 +20,10 @@ Project home, documentation, and source: https://github.com/YehiaGewily/netprobe
 
 - **Windows**: install the [Npcap driver](https://npcap.com/#download) (needed
   for live capture and PCAP support).
-- **Linux**: needs the system libpcap runtime.
-  - **Debian/Ubuntu**: `sudo apt install libpcap0.8` (usually already present).
-  - **Fedora/RHEL**: `sudo dnf install libpcap`
-  - **Arch**: `sudo pacman -S libpcap`
-  - The prebuilt binary is linked on Ubuntu, so it looks for the Debian
-    library name `libpcap.so.0.8`. Other distributions ship the same library
-    under the upstream name `libpcap.so.1` instead, so the app may fail to
-    start with an error like `libpcap.so.0.8: cannot open shared object file`.
-    If that happens, add a compatibility symlink pointing at your installed
-    version (adjust the path if your libdir differs):
-
-    ```bash
-    # Find the real file, then link the expected name next to it:
-    ls /usr/lib/libpcap.so.*        # e.g. /usr/lib/libpcap.so.1.10.4
-    sudo ln -s /usr/lib/libpcap.so.1 /usr/lib/libpcap.so.0.8
-    ```
+- **Linux**: libpcap is statically compiled into the prebuilt binaries, so no
+  distro-specific shared libpcap package or SONAME compatibility symlink is
+  needed. Standard desktop runtime dependencies include glibc, GTK3 (used for
+  native file dialogs), OpenGL/Mesa, and window-system libraries.
 - **macOS**: libpcap ships with the OS — nothing to install.
 
 ## Quick start
@@ -97,21 +85,34 @@ for portable installs.
 
 `data/README.md` has the MaxMind download details.
 
-## Verify your download
-
-Each release publishes a `SHA256SUMS.txt` asset. Compare your download's
-SHA-256 hash against it:
-
+## Verify your download and launch
+ 
+Each release publishes a `SHA256SUMS.txt` asset. Always verify your download's
+SHA-256 hash and origin before running:
+ 
 ```powershell
 Get-FileHash NetProbe-*.zip -Algorithm SHA256   # Windows
 ```
-
+ 
 ```bash
 sha256sum -c SHA256SUMS.txt --ignore-missing    # Linux (or macOS DMG)
 ```
-
+ 
 On macOS you can also verify the mounted DMG directly:
-
+ 
 ```bash
 shasum -a 256 NetProbe-*-Darwin.dmg
 ```
+
+### Unsigned Binary First-Run Guidance
+
+NetProbe is an independent open-source project, and releases are currently unsigned
+(see `SIGNING.md`). Modern operating systems will present a security warning on first launch:
+
+- **Windows SmartScreen**: If "Windows protected your PC" appears, verify the hash
+  matches `SHA256SUMS.txt`, then click **More info** → **Run anyway**. Never disable
+  SmartScreen globally in Windows Settings.
+- **macOS Gatekeeper**: Right-click (or Control-click) `NetProbe.app` and select
+  **Open**, then confirm by clicking **Open** in the dialog. Alternatively, go to
+  **System Settings → Privacy & Security** and click **Open Anyway**. Never disable
+  Gatekeeper system-wide with `spctl`.

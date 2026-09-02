@@ -13,10 +13,14 @@ itself is MIT-licensed (see `LICENSE`).
 | Dear ImGui | docking branch | MIT | https://github.com/ocornut/imgui |
 | ImPlot | master | MIT | https://github.com/epezent/implot |
 | Native File Dialog Extended | 1.2.1 | zlib | https://github.com/btzy/nativefiledialog-extended |
+| libpcap (Linux prebuilt binaries) | 1.10.5 | BSD-3-Clause | https://github.com/the-tcpdump-group/libpcap |
 
-Packet capture is provided by Npcap (Windows) or libpcap (Linux/macOS). These
-are **not** distributed with NetProbe — users install them separately under
-their own license terms.
+Packet capture on Windows is provided by Npcap and on macOS by the system-provided
+libpcap. These are **not** distributed with NetProbe — users install or obtain them
+under their respective platform license terms.
+
+On Linux, NetProbe prebuilt binaries statically compile `libpcap` 1.10.5 from source,
+licensed under the 3-Clause BSD License reproduced below.
 
 The GUI loads fonts from the operating system; no font files are distributed.
 
@@ -127,6 +131,28 @@ freely, subject to the following restrictions:
 2. Altered source versions must be plainly marked as such, and must not be
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
+
+## libpcap 1.10.5 (Linux prebuilt binaries)
+
+License: BSD
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  1. Redistributions of source code must retain the above copyright
+     notice, this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in
+     the documentation and/or other materials provided with the
+     distribution.
+  3. The names of the authors may not be used to endorse or promote
+     products derived from this software without specific prior
+     written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 
 ---
 

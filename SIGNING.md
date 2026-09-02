@@ -77,7 +77,7 @@ from the signed tag. The build:
    have not moved historically. When the project needs stronger
    guarantees — for example ahead of an audit — these will be pinned
    to commit SHAs instead of tags.
-3. Runs the full test suite (89 tests as of v1.2.1) and the sanitizer
+3. Runs the full test suite (95 tests as of v1.3.1) and the sanitizer
    job that gates release publication.
 4. Packages the ZIP via CPack. The layout is verified by a smoke test
    that extracts the ZIP and runs the CLI from it; the build fails if
