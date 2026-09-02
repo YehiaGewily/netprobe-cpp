@@ -93,6 +93,11 @@ else()
     set(DISABLE_USB       ON CACHE BOOL "" FORCE)
     set(DISABLE_NETMAP    ON CACHE BOOL "" FORCE)
     set(DISABLE_DPDK      ON CACHE BOOL "" FORCE)
+    # nl80211 monitor-mode support links libnl-3/libnl-genl-3. Left on, the
+    # static archive references nl_*/genl_* symbols and the link fails on runners
+    # without libnl-genl-3-dev (and would add the very SONAME dependency the rest
+    # of these flags remove). We do not capture on wireless monitor interfaces.
+    set(BUILD_WITH_LIBNL  OFF CACHE BOOL "" FORCE)
     # Build only the static archive; we neither ship nor link libpcap.so.
     set(_netprobe_saved_shared ${BUILD_SHARED_LIBS})
     set(BUILD_SHARED_LIBS OFF)
